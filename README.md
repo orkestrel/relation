@@ -19,7 +19,7 @@ npm install @orkestrel/relation
 ## Requirements
 
 - Node.js >= 24
-- ESM-only (no CommonJS build)
+- Dual build — ESM (`import`) and CommonJS (`require`) both resolve typed entry points
 
 ## Usage
 

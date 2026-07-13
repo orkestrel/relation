@@ -2,6 +2,7 @@ import type {
 	DatabaseInterface,
 	Direction,
 	Key,
+	ReadOptions,
 	Row,
 	RowOf,
 	TableInterface,
@@ -156,12 +157,13 @@ export interface RelationContext {
 	readonly primary: string
 }
 
-/** Pagination and ordering for `find`. */
+/** Pagination, ordering, and cancellation for `find`. */
 export interface FindOptions {
 	readonly limit?: number
 	readonly offset?: number
 	readonly sort?: string
 	readonly direction?: Direction
+	readonly signal?: ReadOptions['signal']
 }
 
 // === Model
@@ -217,12 +219,16 @@ export interface ModelInterface<T = Row> {
 	readonly name: string
 	readonly table: TableInterface<T>
 	readonly relations: RelationMap
-	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<readonly (Loaded<T> | undefined)[]>
+	load(key: Key, include: Include, options?: ReadOptions): Promise<Loaded<T> | undefined>
+	load(
+		keys: readonly Key[],
+		include: Include,
+		options?: ReadOptions,
+	): Promise<readonly (Loaded<T> | undefined)[]>
 	find(include: Include, options?: FindOptions): Promise<readonly Loaded<T>[]>
-	link(key: Key, relation: string, target: Key): Promise<void>
-	unlink(key: Key, relation: string, target: Key): Promise<void>
-	links(key: Key, relation: string): Promise<readonly Key[]>
+	link(key: Key, relation: string, target: Key, options?: ReadOptions): Promise<void>
+	unlink(key: Key, relation: string, target: Key, options?: ReadOptions): Promise<void>
+	links(key: Key, relation: string, options?: ReadOptions): Promise<readonly Key[]>
 }
 
 // === Manager

@@ -1,4 +1,4 @@
-import { belongsTo, createRelationManager, hasMany } from '@src/core'
+import { belongsTo, createRelationManager, hasMany, hasThrough } from '@src/core'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
@@ -46,6 +46,49 @@ describe('RelationManager — registry', () => {
 		const manager = createRelationManager({ database: db })
 		expect(manager.count).toBe(0)
 		expect(manager.models()).toEqual([])
+	})
+})
+
+describe('RelationManager — fail-fast target validation', () => {
+	it('throws INVALID at construction when a relation targets an undeclared table', async () => {
+		const db = createDatabase({
+			driver: createMemoryDriver(),
+			tables: { accounts: { id: stringShape(), name: stringShape() } },
+		})
+		expect(() =>
+			createRelationManager({
+				database: db,
+				relations: { accounts: { ghost: belongsTo('ghostId', 'ghosts') } },
+			}),
+		).toThrow(
+			expect.objectContaining({
+				code: 'INVALID',
+				message: expect.stringMatching(/accounts.*ghost.*ghosts/),
+			}),
+		)
+	})
+
+	it('throws INVALID at construction when a through junction table is undeclared', async () => {
+		const db = createDatabase({
+			driver: createMemoryDriver(),
+			tables: {
+				accounts: { id: stringShape(), name: stringShape() },
+				reps: { id: stringShape(), name: stringShape() },
+			},
+		})
+		expect(() =>
+			createRelationManager({
+				database: db,
+				relations: {
+					accounts: { reps: hasThrough('missingJunction', 'accountId', 'repId', 'reps') },
+				},
+			}),
+		).toThrow(
+			expect.objectContaining({
+				code: 'INVALID',
+				message: expect.stringMatching(/accounts.*reps.*missingJunction/),
+			}),
+		)
 	})
 })
 

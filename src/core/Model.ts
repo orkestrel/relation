@@ -1,4 +1,4 @@
-import type { DatabaseInterface, Key, Row, TableInterface } from '@orkestrel/database'
+import type { DatabaseInterface, Key, ReadOptions, Row, TableInterface } from '@orkestrel/database'
 import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
 import type {
 	FindOptions,
@@ -11,7 +11,7 @@ import type {
 	RelationProps,
 	ResolvedRelation,
 } from './types.js'
-import { extractKey } from '@orkestrel/database'
+import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
 import { isArray, isDefined } from '@orkestrel/contract'
 import { RelationError } from './errors.js'
@@ -85,17 +85,29 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		return this.#relations
 	}
 
-	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<readonly (Loaded<T> | undefined)[]>
+	load(key: Key, include: Include, options?: ReadOptions): Promise<Loaded<T> | undefined>
+	load(
+		keys: readonly Key[],
+		include: Include,
+		options?: ReadOptions,
+	): Promise<readonly (Loaded<T> | undefined)[]>
 	async load(
 		keys: Key | readonly Key[],
 		include: Include,
+		options?: ReadOptions,
 	): Promise<(Loaded<T> | undefined) | readonly (Loaded<T> | undefined)[]> {
+		checkAbort(options?.signal)
 		if (isArray(keys)) {
 			// Batch: one `get`, then one populate over all present rows (no N+1).
 			const bases = await this.#table.get(keys)
 			const present = bases.filter(isDefined)
-			const props = await this.#populate(present, include, this.#resolved, this.#table.primary)
+			const props = await this.#populate(
+				present,
+				include,
+				this.#resolved,
+				this.#table.primary,
+				options?.signal,
+			)
 			let next = 0
 			return bases.map((base) =>
 				base === undefined ? undefined : Object.assign({}, base, props[next++]),
@@ -103,11 +115,18 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		}
 		const base = await this.#table.get(keys)
 		if (base === undefined) return undefined
-		const [props] = await this.#populate([base], include, this.#resolved, this.#table.primary)
+		const [props] = await this.#populate(
+			[base],
+			include,
+			this.#resolved,
+			this.#table.primary,
+			options?.signal,
+		)
 		return Object.assign({}, base, props)
 	}
 
 	async find(include: Include, options?: FindOptions): Promise<readonly Loaded<T>[]> {
+		checkAbort(options?.signal)
 		const query = this.#table.query()
 		if (options?.sort !== undefined) {
 			if (options.direction === 'descending') query.descending(options.sort)
@@ -116,22 +135,55 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		if (options?.offset !== undefined) query.offset(options.offset)
 		if (options?.limit !== undefined) query.limit(options.limit)
 		const records = await query.all()
-		const props = await this.#populate(records, include, this.#resolved, this.#table.primary)
+		const props = await this.#populate(
+			records,
+			include,
+			this.#resolved,
+			this.#table.primary,
+			options?.signal,
+		)
 		return records.map((record, index) => Object.assign({}, record, props[index]))
 	}
 
-	async link(key: Key, relation: string, target: Key): Promise<void> {
+	/**
+	 * Insert a junction row for a `through` relation — idempotent.
+	 *
+	 * @remarks
+	 * When a junction row already exists for `(key, target)`, `link` returns without
+	 * writing and without emitting `link` — a no-op link is silent, never a duplicate
+	 * insert. The junction table has no declared primary key on its FK pair, so a fresh
+	 * insert relies on the database's `key` factory (`createDatabase({ key })`) to mint
+	 * one; a database created without one throws a `VALIDATION` `DatabaseError` on the
+	 * underlying `set`.
+	 *
+	 * @param key - The owning record's key
+	 * @param relation - The `through` relation's name
+	 * @param target - The related record's key to link
+	 * @param options - Optional `{ signal }` — checked at entry (cooperative cancellation)
+	 */
+	async link(key: Key, relation: string, target: Key, options?: ReadOptions): Promise<void> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		await this.#database.table(resolved.through ?? '').set({
-			[resolved.source ?? '']: key,
-			[resolved.target ?? '']: target,
-		})
+		const source = resolved.source ?? ''
+		const column = resolved.target ?? ''
+		const junction = this.#database.table(resolved.through ?? '')
+		const existing = await junction
+			.query()
+			.where(source)
+			.equals(key)
+			.and(column)
+			.equals(target)
+			.first()
+		// Idempotent: a matching junction row already exists — no write, no `link` event.
+		if (existing !== undefined) return
+		await junction.set({ [source]: key, [column]: target }, options)
 		// Observe the inserted junction row — AFTER the driver write, so a swallowed listener
 		// throw can't perturb the link (carries the owning key + the relation name).
 		this.#emitter.emit('link', key, relation)
 	}
 
-	async unlink(key: Key, relation: string, target: Key): Promise<void> {
+	async unlink(key: Key, relation: string, target: Key, options?: ReadOptions): Promise<void> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
 		const junction = this.#database.table(resolved.through ?? '')
 		const rows = await junction
@@ -141,15 +193,21 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 			.and(resolved.target ?? '')
 			.equals(target)
 			.all()
-		for (const row of rows) {
-			const id = extractKey(row, junction.primary)
-			if (id !== undefined) await junction.remove(id)
-		}
-		// Observe the removed junction — AFTER every matching row was deleted.
+		// Atomic: every matching junction row is removed inside one transaction, so a
+		// mid-loop fault (a wrapping/failing driver) leaves the junction unchanged rather
+		// than partially deleted.
+		await this.#database.transaction(async () => {
+			for (const row of rows) {
+				const id = extractKey(row, junction.primary)
+				if (id !== undefined) await junction.remove(id, options)
+			}
+		}, options)
+		// Observe the removed junction — AFTER the transaction commits.
 		this.#emitter.emit('unlink', key, relation)
 	}
 
-	async links(key: Key, relation: string): Promise<readonly Key[]> {
+	async links(key: Key, relation: string, options?: ReadOptions): Promise<readonly Key[]> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
 		const junction = this.#database.table(resolved.through ?? '')
 		const rows = await junction
@@ -158,12 +216,13 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 			.equals(key)
 			.all()
 		const target = resolved.target ?? ''
-		const keys: Key[] = []
+		// Dedupe — defense-in-depth against pre-existing duplicate junction rows.
+		const keys = new Set<Key>()
 		for (const row of rows) {
 			const value = extractKey(row, target)
-			if (value !== undefined) keys.push(value)
+			if (value !== undefined) keys.add(value)
 		}
-		return keys
+		return [...keys]
 	}
 
 	// === Private
@@ -199,13 +258,19 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		include: Include,
 		resolvedMap: ReadonlyMap<string, ResolvedRelation>,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<RelationProps[]> {
+		checkAbort(signal)
 		const props: RelationProps[] = records.map(() => ({}))
 		for (const [name, sub] of Object.entries(include)) {
 			if (sub === false) continue
+			// Cooperative cancellation: checked between each per-relation batched query, not
+			// mid-query (query terminals take no signal — AGENTS: cancellation here is
+			// cooperative between queries).
+			checkAbort(signal)
 			const resolved = resolvedMap.get(name)
 			if (resolved === undefined) continue
-			const values = await this.#load(records, resolved, sub, primary)
+			const values = await this.#load(records, resolved, sub, primary, signal)
 			values.forEach((value, index) => {
 				props[index][resolved.name] = value
 			})
@@ -235,18 +300,19 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<(Row | readonly Row[] | undefined)[]> {
 		switch (resolved.relationship) {
 			case 'belongs':
-				return this.#loadBelongs(records, resolved, sub)
+				return this.#loadBelongs(records, resolved, sub, signal)
 			case 'many':
-				return this.#loadMany(records, resolved, sub, primary)
+				return this.#loadMany(records, resolved, sub, primary, signal)
 			case 'one':
-				return this.#loadOne(records, resolved, sub, primary)
+				return this.#loadOne(records, resolved, sub, primary, signal)
 			case 'through':
-				return this.#loadThrough(records, resolved, sub, primary)
+				return this.#loadThrough(records, resolved, sub, primary, signal)
 			case 'morph':
-				return this.#loadMorph(records, resolved, sub, primary)
+				return this.#loadMorph(records, resolved, sub, primary, signal)
 		}
 	}
 
@@ -254,6 +320,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		records: readonly object[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
+		signal?: AbortSignal,
 	): Promise<(Row | undefined)[]> {
 		const column = resolved.column ?? ''
 		const keys = [
@@ -262,7 +329,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		if (keys.length === 0) return records.map(() => undefined)
 		const related = this.#database.table(resolved.model)
 		const rows = await related.query().where(related.primary).any(keys).all()
-		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
+		const index = this.#index(await this.#nest(resolved.model, rows, sub, signal), related.primary)
 		return records.map((record) => {
 			const fk = this.#field(record, column)
 			return isDefined(fk) ? index.get(String(fk)) : undefined
@@ -274,6 +341,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<(readonly Row[])[]> {
 		const foreign = resolved.key ?? ''
 		const keys = [
@@ -281,7 +349,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		]
 		if (keys.length === 0) return records.map(() => [])
 		const rows = await this.#database.table(resolved.model).query().where(foreign).any(keys).all()
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
+		const groups = this.#group(await this.#nest(resolved.model, rows, sub, signal), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}
 
@@ -290,8 +358,9 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<(Row | undefined)[]> {
-		const groups = await this.#loadMany(records, resolved, sub, primary)
+		const groups = await this.#loadMany(records, resolved, sub, primary, signal)
 		return groups.map((group) => (group.length > 0 ? group[0] : undefined))
 	}
 
@@ -300,6 +369,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<(readonly Row[])[]> {
 		const source = resolved.source ?? ''
 		const target = resolved.target ?? ''
@@ -328,13 +398,20 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		if (targets.length === 0) return records.map(() => [])
 		const related = this.#database.table(resolved.model)
 		const rows = await related.query().where(related.primary).any(targets).all()
-		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
+		const index = this.#index(await this.#nest(resolved.model, rows, sub, signal), related.primary)
 
 		return records.map((record) => {
+			// Dedupe — defense-in-depth against pre-existing duplicate junction rows.
+			const seen = new Set<string>()
 			const out: Row[] = []
 			for (const value of targetsBySource.get(String(this.#field(record, primary))) ?? []) {
-				const row = index.get(String(value))
-				if (row !== undefined) out.push(row)
+				const key = String(value)
+				if (seen.has(key)) continue
+				const row = index.get(key)
+				if (row !== undefined) {
+					seen.add(key)
+					out.push(row)
+				}
 			}
 			return out
 		})
@@ -345,6 +422,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		signal?: AbortSignal,
 	): Promise<(readonly Row[])[]> {
 		const foreign = resolved.key ?? ''
 		const keys = [
@@ -359,7 +437,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 			.and(resolved.tag ?? '')
 			.equals(resolved.label ?? '')
 			.all()
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
+		const groups = this.#group(await this.#nest(resolved.model, rows, sub, signal), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}
 
@@ -368,11 +446,12 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 		model: string,
 		rows: readonly Row[],
 		sub: boolean | Include,
+		signal?: AbortSignal,
 	): Promise<readonly Row[]> {
 		if (typeof sub === 'boolean' || rows.length === 0) return rows
 		const context = this.#lookup(model)
 		if (context === undefined) return rows
-		const props = await this.#populate(rows, sub, context.resolved, context.primary)
+		const props = await this.#populate(rows, sub, context.resolved, context.primary, signal)
 		return rows.map((row, index) => Object.assign({}, row, props[index]))
 	}
 

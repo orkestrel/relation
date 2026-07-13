@@ -1,9 +1,14 @@
 import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
 import type { Row } from '@orkestrel/database'
-import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
 import { isArray, isRecord, stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
-import { createRecorder, recordEmitterEvents } from '../../setup.js'
+import {
+	createFaultyDriver,
+	createRecorder,
+	createRecordingDriver,
+	recordEmitterEvents,
+} from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
 // `find` populating each relation kind (batched, no N+1), nested `includes`, the
@@ -20,9 +25,9 @@ function one(value: unknown): Row {
 	return isRecord(value) ? value : {}
 }
 
-async function setup() {
+async function setup(driver = createMemoryDriver()) {
 	const db = createDatabase({
-		driver: createMemoryDriver(),
+		driver,
 		// `accountReps` junction rows are written by `Model.link` without an `id` —
 		// a key factory mints one (the accounts / contacts / etc. tables always pass
 		// an explicit `id`, so this only ever fires for the junction table).
@@ -192,6 +197,141 @@ describe('Model — through management', () => {
 		await expect(accounts.links('acc1', 'missing')).rejects.toMatchObject({
 			code: 'UNKNOWN_RELATION',
 		})
+	})
+})
+
+describe('Model — link idempotence (UNIT 1)', () => {
+	it('a duplicate link is a no-op: no second row, no second link event', async () => {
+		const { db, accounts } = await setup()
+		const events = recordEmitterEvents(accounts.emitter, ['link'] as const)
+		await accounts.link('acc1', 'reps', 'rep3')
+		expect(await db.table('accountReps').count()).toBe(3)
+		expect(events.link.count).toBe(1)
+		// Re-linking the same (key, target) pair writes nothing and emits nothing.
+		await accounts.link('acc1', 'reps', 'rep3')
+		expect(await db.table('accountReps').count()).toBe(3)
+		expect(events.link.count).toBe(1)
+	})
+
+	it('links() dedupes pre-existing duplicate junction rows', async () => {
+		const { db, accounts } = await setup()
+		// Manually insert a duplicate junction row (accountId=acc1, repId=rep1 already exists as ar1).
+		await db.table('accountReps').set({ id: 'ar-dup', accountId: 'acc1', repId: 'rep1' })
+		expect([...(await accounts.links('acc1', 'reps'))].sort()).toEqual(['rep1', 'rep2'])
+	})
+
+	it('through-load dedupes with a manually-inserted duplicate junction row', async () => {
+		const { db, accounts } = await setup()
+		await db.table('accountReps').set({ id: 'ar-dup', accountId: 'acc1', repId: 'rep1' })
+		const acme = await accounts.load('acc1', { reps: true })
+		expect(
+			rows(acme?.reps)
+				.map((r) => r.id)
+				.sort(),
+		).toEqual(['rep1', 'rep2'])
+	})
+})
+
+describe('Model — unlink atomicity (UNIT 2)', () => {
+	it('a mid-loop driver fault leaves the junction unchanged and fires no unlink event', async () => {
+		const base = createMemoryDriver()
+		const { db, accounts } = await setup(createFaultyDriver(base, 2))
+		// Insert a duplicate junction row so two rows match (accountId=acc1, repId=rep1) — the
+		// faulty driver's second `delete` call throws, so the transaction must roll back BOTH.
+		await db.table('accountReps').set({ id: 'ar-dup', accountId: 'acc1', repId: 'rep1' })
+		const events = recordEmitterEvents(accounts.emitter, ['unlink'] as const)
+		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toBeTruthy()
+		// Junction unchanged — both matching rows survive (the first delete was rolled back too).
+		expect(await db.table('accountReps').count()).toBe(3)
+		expect(events.unlink.count).toBe(0)
+	})
+})
+
+describe('Model — batching proof (UNIT 6, no N+1)', () => {
+	it('issues exactly one (or two for through) batched scan per relation across MULTIPLE parents', async () => {
+		const base = createMemoryDriver()
+		const recorder = createRecordingDriver(base)
+		const { accounts } = await setup(recorder.driver)
+		const loaded = await accounts.load(['acc1', 'acc2'], {
+			classification: true, // belongs
+			contacts: true, // many
+			profile: true, // one
+			reps: true, // through (junction + targets — two scans)
+			notes: true, // morph
+		})
+		expect(loaded.map((a) => a?.name)).toEqual(['Acme', 'Beta'])
+		// belongs: one scan of `classifications` (the distinct FK set), regardless of 2 parents.
+		expect(recorder.count('classifications')).toBe(1)
+		// many / one: one scan each of `contacts` / `profiles`.
+		expect(recorder.count('contacts')).toBe(1)
+		expect(recorder.count('profiles')).toBe(1)
+		// through: one scan of the junction (`accountReps`), one of the targets (`reps`).
+		expect(recorder.count('accountReps')).toBe(1)
+		expect(recorder.count('reps')).toBe(1)
+		// morph: one scan of `notes`.
+		expect(recorder.count('notes')).toBe(1)
+	})
+
+	it('load([]) issues no relation queries', async () => {
+		const base = createMemoryDriver()
+		const recorder = createRecordingDriver(base)
+		const { accounts } = await setup(recorder.driver)
+		const loaded = await accounts.load([], { contacts: true, reps: true })
+		expect(loaded).toEqual([])
+		expect(recorder.count('contacts')).toBe(0)
+		expect(recorder.count('accountReps')).toBe(0)
+	})
+
+	it('a parent with a null/absent FK misses its belongs relation without erroring', async () => {
+		const { db, accounts } = await setup()
+		await db.table('accounts').set({ id: 'acc3', name: 'Gamma', classificationId: '' })
+		await db.table('classifications').set({ id: '', label: 'unset' })
+		await db.table('accounts').set({ id: 'acc4', name: 'Delta', classificationId: 'acc4-missing' })
+		const [gamma, delta] = await accounts.load(['acc3', 'acc4'], { classification: true })
+		expect(one(gamma?.classification).label).toBe('unset')
+		expect(delta?.classification).toBeUndefined()
+	})
+
+	it('a through target pointing at a deleted row is silently excluded', async () => {
+		const { db, accounts } = await setup()
+		await accounts.link('acc1', 'reps', 'rep3')
+		await db.table('reps').remove('rep3')
+		const acme = await accounts.load('acc1', { reps: true })
+		expect(
+			rows(acme?.reps)
+				.map((r) => r.id)
+				.sort(),
+		).toEqual(['rep1', 'rep2'])
+	})
+})
+
+describe('Model — cooperative cancellation (UNIT 3)', () => {
+	it('a pre-aborted signal throws ABORTED before any query', async () => {
+		const { accounts } = await setup()
+		const controller = new AbortController()
+		controller.abort('too slow')
+		await expect(
+			accounts.load('acc1', { contacts: true }, { signal: controller.signal }),
+		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
+	})
+
+	it('an abort between relations stops the remaining loads', async () => {
+		const { accounts } = await setup()
+		const controller = new AbortController()
+		let seen = 0
+		accounts.emitter.on('load', () => {
+			seen += 1
+			if (seen === 1) controller.abort('stop after first relation')
+		})
+		await expect(
+			accounts.load(
+				'acc1',
+				{ contacts: true, classification: true },
+				{ signal: controller.signal },
+			),
+		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
+		// Only the first relation's load fired before the abort was observed.
+		expect(seen).toBe(1)
 	})
 })
 

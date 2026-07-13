@@ -9,6 +9,7 @@ import type {
 	ResolvedRelation,
 } from './types.js'
 import { resolveRelationMap } from './helpers.js'
+import { RelationError } from './errors.js'
 import { Model } from './Model.js'
 
 /**
@@ -18,8 +19,11 @@ import { Model } from './Model.js'
  * @remarks
  * Holds the database both at its precise type (to type each model's own table)
  * and at the broad `DatabaseInterface` (to fetch related tables by runtime name
- * while loading). Relation targets are validated lazily — a relation to a missing
- * table fails when that relation is first loaded.
+ * while loading). Relation targets are validated FAIL-FAST at construction: every
+ * resolved relation's target table (and, for `through`, its junction table) must
+ * name a table the database declares (via `export()`), or construction throws
+ * `RelationError('INVALID', …)` naming the model, relation, and missing table —
+ * never a deferred failure discovered only when that relation is first loaded.
  */
 export class RelationManager<
 	T extends TablesShape = TablesShape,
@@ -33,8 +37,35 @@ export class RelationManager<
 		this.#database = options.database
 		this.#broad = options.database
 		this.#relations = options.relations ?? {}
+		// Fail-fast: validate every resolved relation's target (and, for `through`, its
+		// junction) names a table the database actually declares — BEFORE any relation
+		// ever loads. `export()` is the portable source of the database's declared table
+		// names (its keys), so this needs no extra API.
+		const declared = new Set(Object.keys(this.#broad.export()))
 		for (const [name, map] of Object.entries(this.#relations)) {
-			if (map !== undefined) this.#resolved.set(name, resolveRelationMap(map))
+			if (map === undefined) continue
+			const resolved = resolveRelationMap(map)
+			for (const [relation, entry] of resolved) {
+				if (!declared.has(entry.model)) {
+					throw new RelationError(
+						'INVALID',
+						`Model '${name}' relation '${relation}' targets undeclared table '${entry.model}'`,
+						{ model: name, relation, table: entry.model },
+					)
+				}
+				if (
+					entry.relationship === 'through' &&
+					entry.through !== undefined &&
+					!declared.has(entry.through)
+				) {
+					throw new RelationError(
+						'INVALID',
+						`Model '${name}' relation '${relation}' through junction '${entry.through}' is not a declared table`,
+						{ model: name, relation, table: entry.through },
+					)
+				}
+			}
+			this.#resolved.set(name, resolved)
 		}
 	}
 

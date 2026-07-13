@@ -2,6 +2,7 @@
 // Vitest project (`setupFiles[0]`).
 
 import type { EmitterInterface, EventMap } from '@orkestrel/emitter'
+import type { DriverInterface } from '@orkestrel/database'
 import { integerShape, stringShape } from '@orkestrel/contract'
 import type { RelationsShape } from '@src/core'
 import { hasMany } from '@src/core'
@@ -117,4 +118,80 @@ export const INTEGRATION_TABLES = {
 /** The shared relation map over {@link INTEGRATION_TABLES} — `users` has many `posts`. */
 export const INTEGRATION_RELATIONS: RelationsShape<typeof INTEGRATION_TABLES> = {
 	users: { posts: hasMany('author') },
+}
+
+// ── Faulty driver wrapper ─────────────────────────────────────────────────────
+// AGENTS §16.1: a real (delegating) driver, not a mock of behavior — every method
+// forwards to `driver` except `delete`, which throws once the call count named by
+// `after` is reached, for testing mid-loop/mid-transaction fault handling.
+
+/**
+ * Wrap a real `DriverInterface` so its `delete` throws starting from the
+ * `after`-th call (1-indexed) — for proving atomicity when a multi-row removal
+ * faults partway through.
+ *
+ * @param driver - The real driver to delegate every other method to
+ * @param after - The 1-indexed call number of `delete` that starts throwing
+ * @returns A `DriverInterface` identical to `driver` except a failing `delete`
+ */
+export function createFaultyDriver(driver: DriverInterface, after: number): DriverInterface {
+	let calls = 0
+	return {
+		open: (schema) => driver.open(schema),
+		close: () => driver.close(),
+		read: (table, key) => driver.read(table, key),
+		write: (table, key, row) => driver.write(table, key, row),
+		delete: (table, key) => {
+			calls += 1
+			if (calls >= after) throw new Error('faulty driver: delete failed')
+			return driver.delete(table, key)
+		},
+		keys: (table) => driver.keys(table),
+		scan: (table) => driver.scan(table),
+		clear: (table) => driver.clear(table),
+		snapshot: (tables) => driver.snapshot(tables),
+	}
+}
+
+// ── Recording driver wrapper ──────────────────────────────────────────────────
+// AGENTS §16.1: a real (delegating) driver that tallies `scan` calls per table —
+// the direct no-N+1 proof: a query without a native `records` override runs
+// through the engine's `scan` fallback, so one tallied `scan` call per table IS
+// one batched query, regardless of how many parent records triggered it.
+
+/** A per-table `scan` call tally over a real driver (AGENTS §16.1). */
+export interface QueryRecorderInterface {
+	readonly driver: DriverInterface
+	count(table: string): number
+}
+
+/**
+ * Wrap a real `DriverInterface` to tally `scan` calls per table, for asserting
+ * batched (no N+1) loading — one `scan` per relation regardless of parent count.
+ *
+ * @param driver - The real driver to delegate every method to
+ * @returns A recorder exposing the wrapped `driver` and a per-table `count`
+ */
+export function createRecordingDriver(driver: DriverInterface): QueryRecorderInterface {
+	const tally: Record<string, number> = {}
+	const wrapped: DriverInterface = {
+		open: (schema) => driver.open(schema),
+		close: () => driver.close(),
+		read: (table, key) => driver.read(table, key),
+		write: (table, key, row) => driver.write(table, key, row),
+		delete: (table, key) => driver.delete(table, key),
+		keys: (table) => driver.keys(table),
+		scan: (table) => {
+			tally[table] = (tally[table] ?? 0) + 1
+			return driver.scan(table)
+		},
+		clear: (table) => driver.clear(table),
+		snapshot: (tables) => driver.snapshot(tables),
+	}
+	return {
+		driver: wrapped,
+		count(table: string) {
+			return tally[table] ?? 0
+		},
+	}
 }
