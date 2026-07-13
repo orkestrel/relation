@@ -1,4 +1,4 @@
-import type { DatabaseInterface, RowOf, TableInterface, TablesShape } from '../databases/index.js'
+import type { DatabaseInterface, RowOf, TableInterface, TablesShape } from '@orkestrel/database'
 import type {
 	ModelInterface,
 	RelationContext,

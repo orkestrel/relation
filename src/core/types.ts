@@ -6,8 +6,8 @@ import type {
 	RowOf,
 	TableInterface,
 	TablesShape,
-} from '../databases/index.js'
-import type { EmitterInterface } from '../emitters/index.js'
+} from '@orkestrel/database'
+import type { EmitterInterface } from '@orkestrel/emitter'
 
 // Relations — ORM-style eager loading layered on the database. A relation
 // manager is created over a database and a declarative map of per-table

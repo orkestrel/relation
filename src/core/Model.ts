@@ -1,5 +1,5 @@
-import type { DatabaseInterface, Key, Row, TableInterface } from '../databases/index.js'
-import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '../emitters/index.js'
+import type { DatabaseInterface, Key, Row, TableInterface } from '@orkestrel/database'
+import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
 import type {
 	FindOptions,
 	Include,
@@ -11,9 +11,9 @@ import type {
 	RelationProps,
 	ResolvedRelation,
 } from './types.js'
-import { extractKey } from '../databases/index.js'
-import { Emitter } from '../emitters/index.js'
-import { isArray, isDefined } from '../contracts/index.js'
+import { extractKey } from '@orkestrel/database'
+import { Emitter } from '@orkestrel/emitter'
+import { isArray, isDefined } from '@orkestrel/contract'
 import { RelationError } from './errors.js'
 
 /**

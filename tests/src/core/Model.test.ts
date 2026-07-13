@@ -1,19 +1,9 @@
-import type { Row } from '@src/core'
-import {
-	belongsTo,
-	createDatabase,
-	createMemoryDriver,
-	createRelationManager,
-	hasMany,
-	hasMorph,
-	hasOne,
-	hasThrough,
-	isArray,
-	isRecord,
-	stringShape,
-} from '@src/core'
+import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
+import type { Row } from '@orkestrel/database'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import { isArray, isRecord, stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
-import { createRecorder, recordEmitterEvents } from '../../../setup.js'
+import { createRecorder, recordEmitterEvents } from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
 // `find` populating each relation kind (batched, no N+1), nested `includes`, the
@@ -33,6 +23,10 @@ function one(value: unknown): Row {
 async function setup() {
 	const db = createDatabase({
 		driver: createMemoryDriver(),
+		// `accountReps` junction rows are written by `Model.link` without an `id` —
+		// a key factory mints one (the accounts / contacts / etc. tables always pass
+		// an explicit `id`, so this only ever fires for the junction table).
+		key: () => crypto.randomUUID(),
 		tables: {
 			accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
 			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },

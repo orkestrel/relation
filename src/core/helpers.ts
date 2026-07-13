@@ -5,7 +5,7 @@ import type {
 	Relationship,
 	ResolvedRelation,
 } from './types.js'
-import { isArray, isDefined, isRecord, isString } from '../contracts/index.js'
+import { isArray, isDefined, isRecord, isString } from '@orkestrel/contract'
 import { RelationError } from './errors.js'
 
 // Resolve raw relation values into the flat `ResolvedRelation` form once, at

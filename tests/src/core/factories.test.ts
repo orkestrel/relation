@@ -1,6 +1,7 @@
-import { createDatabase, createMemoryDriver, createRelationManager } from '@src/core'
+import { createRelationManager } from '@src/core'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
-import { INTEGRATION_RELATIONS, INTEGRATION_TABLES } from '../../../setup.js'
+import { INTEGRATION_RELATIONS, INTEGRATION_TABLES } from '../../setup.js'
 
 // The relations factory — that `createRelationManager` wires up a working manager.
 // The full Model / manager behavior is covered in Model.test.ts / RelationManager.test.ts;

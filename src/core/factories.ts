@@ -1,5 +1,5 @@
 import type { RelationManagerInterface, RelationManagerOptions } from './types.js'
-import type { TablesShape } from '../databases/index.js'
+import type { TablesShape } from '@orkestrel/database'
 import { RelationManager } from './RelationManager.js'
 
 /**

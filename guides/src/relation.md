@@ -1,8 +1,8 @@
-# Relations
+# Relation
 
-> A small, declarative ORM layer over the [databases](databases.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — one query per relation across the whole record set (`where(col).any(keys)`), grouped in memory and merged on — so a hundred parents cost the same number of round-trips as one. Five relation kinds (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
+> A small, declarative ORM layer over the [database](database.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — one query per relation across the whole record set (`where(col).any(keys)`), grouped in memory and merged on — so a hundred parents cost the same number of round-trips as one. Five relation kinds (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
 >
-> It deliberately stays **thin above the typed store**. Resolution is define-time (each relation is precomputed once into a flat `ResolvedRelation` — nothing is inferred while loading), and the loaded relation properties are intentionally **loose** (`Row | readonly Row[] | undefined`) rather than typed to each exact target row: the typed half is the table reached through `model.table`; relation loading is the looser convenience on top. No write-cascades, no lazy proxies, no query builder of its own — just batched eager loading and junction management. Source: [`src/core/relations`](../../src/core/relations). Surfaced through the `@src/core` barrel.
+> It deliberately stays **thin above the typed store**. Resolution is define-time (each relation is precomputed once into a flat `ResolvedRelation` — nothing is inferred while loading), and the loaded relation properties are intentionally **loose** (`Row | readonly Row[] | undefined`) rather than typed to each exact target row: the typed half is the table reached through `model.table`; relation loading is the looser convenience on top. No write-cascades, no lazy proxies, no query builder of its own — just batched eager loading and junction management. Source: [`src/core`](../../src/core). Surfaced through the `@src/core` barrel.
 
 ## Surface
 
@@ -114,7 +114,7 @@ Follows the manager accessor pattern (`model` singular, `models` plural).
 
 ## Contract
 
-These invariants hold across `src/core/relations` ↔ `relations.md`:
+These invariants hold across `src/core` ↔ `relation.md`:
 
 1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` / `type` row in the `## Surface` tables is a real export of the relations source tree, and every export appears as a Surface row — exhaustive, both directions (AGENTS §22).
 2. **Layered on the typed database.** A manager is built over a `DatabaseInterface`; `model(name)` is checked against the database's declared tables and returns a model whose `table` is that table's typed `TableInterface` (a declared table with no relation entry yields a relation-less model — still fully usable for typed CRUD). Related tables are fetched by runtime name at the broad `Row` type — the load layer is deliberately loose above the typed store, and a relation pointing at a missing table fails the first time that relation loads, not at construction.
@@ -165,6 +165,44 @@ The relation kinds, and where each foreign key lives:
 | `one`     | `hasOne`     | RELATED table  | single or `undefined` |
 | `through` | `hasThrough` | junction table | array                 |
 | `morph`   | `hasMorph`   | RELATED table  | array                 |
+
+### Resolving relations directly
+
+`resolveRelation` / `resolveRelationMap` / `isRelationDescriptor` are what `createRelationManager` calls internally to turn a raw `RelationMap` into `ResolvedRelation`s at construction — reach for them directly when validating a relation map before wiring a manager, or when testing a descriptor's inferred `relationship`:
+
+```ts
+import { isRelationDescriptor, resolveRelation, resolveRelationMap } from '@src/core'
+
+const resolved = resolveRelation('classification', belongsTo('classificationId', 'classifications'))
+resolved.relationship // 'belongs'
+
+const map = resolveRelationMap({ contacts: hasMany('accountId') })
+map.get('contacts')?.relationship // 'many'
+
+isRelationDescriptor(belongsTo('classificationId')) // true — the object form
+```
+
+Catch a malformed relation with `isRelationError`, branching on its machine-readable `code`:
+
+```ts
+import { isRelationError } from '@src/core'
+
+try {
+	resolveRelation('bad', {})
+} catch (error) {
+	if (isRelationError(error)) error.code // 'INVALID'
+}
+```
+
+### The registry surface
+
+Beyond `model(name)`, a `RelationManager` exposes `models()` (every table name with resolved relations) and `has(name)` (whether a given table has any):
+
+```ts
+manager.models() // e.g. ['accounts', 'contacts']
+manager.has('accounts') // true
+manager.has('unrelated_table') // false
+```
 
 ### Loading
 
@@ -241,14 +279,14 @@ The event vocabulary:
 
 ## Tests
 
-- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the `## Surface` ↔ `src/core/relations` bijection (value + type exports).
-- [`tests/src/core/relations/helpers.test.ts`](../../tests/src/core/relations/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `isRelationDescriptor`.
-- [`tests/src/core/relations/RelationManager.test.ts`](../../tests/src/core/relations/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `models` / `has`) and the typed `model(name)` accessor.
-- [`tests/src/core/relations/Model.test.ts`](../../tests/src/core/relations/Model.test.ts) — `Model` behavior: `load` / `find` populating each relation kind (batched, no N+1), nested `includes`, the loaded relation accessors, `link` / `unlink` / `links` junction management, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it; a `Model` reached via the `RelationManager` has no `error` handler, so the throw is swallowed silently).
-- [`tests/src/core/relations/factories.test.ts`](../../tests/src/core/relations/factories.test.ts) — `createRelationManager` wires up a working, typed manager end to end.
+- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports).
+- [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `isRelationDescriptor`.
+- [`tests/src/core/RelationManager.test.ts`](../../tests/src/core/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `models` / `has`) and the typed `model(name)` accessor.
+- [`tests/src/core/Model.test.ts`](../../tests/src/core/Model.test.ts) — `Model` behavior: `load` / `find` populating each relation kind (batched, no N+1), nested `includes`, the loaded relation accessors, `link` / `unlink` / `links` junction management, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it; a `Model` reached via the `RelationManager` has no `error` handler, so the throw is swallowed silently).
+- [`tests/src/core/factories.test.ts`](../../tests/src/core/factories.test.ts) — `createRelationManager` wires up a working, typed manager end to end.
 
 ## See also
 
-- [`databases.md`](databases.md) — the database, tables, and query layer relations build on.
+- [`database.md`](database.md) — the database, tables, and query layer relations build on.
 - [`AGENTS.md`](../../AGENTS.md) — the rules; §12 errors, §14 totality, §22 documentation-as-contracts.
 - [`README.md`](../README.md) — the guides index.

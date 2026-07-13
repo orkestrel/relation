@@ -1,11 +1,6 @@
-import {
-	belongsTo,
-	createDatabase,
-	createMemoryDriver,
-	createRelationManager,
-	hasMany,
-	stringShape,
-} from '@src/core'
+import { belongsTo, createRelationManager, hasMany } from '@src/core'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import { stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
 
 // Manager-level behavior — the registry surface (`count` / `models` / `has`) and
