@@ -92,7 +92,7 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `ModelInterface`
 
-`load` / `find` batch-load (a constant number of queries per relation — one, or two for `through` — regardless of result size, independent of how many parents were loaded); `link` / `unlink` / `links` manage a `through` relation's junction rows. Every method takes an optional trailing `options?: ReadOptions` (`{ signal? }`) for cooperative cancellation — checked at entry and, in `load` / `find`, again between each per-relation batched query (query terminals themselves take no signal, so cancellation is cooperative between queries, not mid-query).
+`load` / `find` batch-load (a constant number of queries per relation — one, or two for `through` — regardless of result size, independent of how many parents were loaded); `link` / `unlink` / `links` manage a `through` relation's junction rows. Every method takes an optional trailing `options?: ReadOptions` (`{ signal? }`; `find` takes `FindOptions`, which carries the same `signal`) for cooperative cancellation — checked at entry and, in `load` / `find`, again between each per-relation batched query (query terminals themselves take no signal, so cancellation is cooperative between queries, not mid-query).
 
 | Method   | Returns                                      | Behavior                                                                                                                    |
 | -------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -123,7 +123,7 @@ These invariants hold across `src/core` ↔ `relation.md`:
 5. **Total, loose `Loaded`.** `Loaded<T>` is the base row (the table's row type) intersected with the broad relation bag `Readonly<RelationProps>` (`Row | readonly Row[] | undefined` per relation); a missed `belongs` / `one` is `undefined`, a missed `many` / `through` / `morph` is `[]`. Through-only operations (`link` / `unlink` / `links`) throw `NOT_THROUGH` on any other kind and `UNKNOWN_RELATION` for a relation the model never declared. `link` is idempotent — re-linking an existing `(key, target)` pair writes nothing and emits nothing; `unlink` removes every matching junction row atomically inside one `transaction`, so a mid-loop driver fault leaves the junction unchanged rather than partially deleted; `links` (and the through-load path) dedupe their output, so pre-existing duplicate junction rows never surface duplicate keys/rows.
 6. **Observation is a pure side-channel (§13).** A `Model` owns a typed `emitter` (`ModelEventMap` — `load(name, count)` / `link(key, relation)` / `unlink(key, relation)`); `RelationManager` is event-free by design (a stateless registry has no observable lifecycle). Every event is emitted directly (the AGENTS §13 convention: the emitter isolates a listener throw, routing it to its OWN `error` handler — the `error` option, surfaced as `(error, event)`, NOT a domain event — itself re-entrancy-guarded) strictly AFTER the load resolves / the junction op completes. `load` fires ONCE per relation (carrying the count of rows attached across the record set — no N+1 in the events), so a buggy observer can corrupt neither the batched eager-load nor a junction write (proven by the emit-safety tests). A no-op `link` (an already-linked pair) fires no `link` event.
 7. **DOC ↔ SOURCE method bijection.** Every behavioral interface's `## Methods` table lists exactly its public methods (call-signature members) — exhaustive, both directions — and each implementing class (`Model` / `RelationManager`) exposes the same public methods, no more (AGENTS §22). A renamed / added / removed method breaks the gate until the table is reconciled.
-8. **Cooperative cancellation.** Every `ModelInterface` method takes an optional trailing `options?: ReadOptions` (`{ signal? }`, re-exported from `@orkestrel/database`). `checkAbort(signal)` is checked at entry, and — in `load` / `find` — again between each per-relation batched query; an already-aborted signal throws `ABORTED` before any query runs, and an abort mid-populate stops before the next relation's query. Query terminals (`.all()` / `.first()`) take no signal in the underlying database, so cancellation is cooperative between queries, never mid-query. `link` / `unlink` thread `options` through to the database calls that accept it (`set` / `remove` / `transaction`); `links` and the read-only load path have no further write/transaction call to thread through.
+8. **Cooperative cancellation.** Every `ModelInterface` method takes an optional trailing `options?: ReadOptions` (`{ signal? }`, imported from `@orkestrel/database`; `find` takes `FindOptions`, which carries the same `signal`). `checkAbort(signal)` is checked at entry, and — in `load` / `find` — again between each per-relation batched query; an already-aborted signal throws `ABORTED` before any query runs, and an abort mid-populate stops before the next relation's query (a `load` event already emitted for a relation that completed first remains emitted — it truthfully observed work that did resolve). Query terminals (`.all()` / `.first()`) take no signal in the underlying database, so cancellation is cooperative between queries, never mid-query. `link` / `unlink` thread `options` through to the database calls that accept it (`set` / `remove` / `transaction`); `links` and the read-only load path have no further write/transaction call to thread through.
 
 Typing each loaded relation property to its exact target row (Prisma-style) is a deliberate, documented deferral — like the database guide's deferred pieces. The `Model` is now **observable** — it owns a typed `emitter` (`ModelEventMap`, §13) carrying its eager-load + junction moments (see [Observing](#observing)); `RelationManager` stays event-free by design (a stateless registry that merely vends models has no observable lifecycle of its own). Still out of scope: write-cascades; they are additive and leave the surface above unchanged.
 
@@ -269,11 +269,9 @@ const repIds = await accounts.links('acc1', 'reps') // the distinct related keys
 
 ### Cancellation
 
-Every `ModelInterface` method takes an optional trailing `options?: ReadOptions` (`{ signal? }`) for cooperative cancellation — the same `ReadOptions` the database uses:
+Every `ModelInterface` method takes an optional trailing `options?: ReadOptions` (`{ signal? }`; `find` takes `FindOptions`, which carries the same `signal`) for cooperative cancellation — the same `ReadOptions` the database uses:
 
 ```ts
-import { checkAbort } from '@orkestrel/database'
-
 const controller = new AbortController()
 const loading = accounts.load(
 	'acc1',
@@ -284,7 +282,7 @@ controller.abort('too slow') // checked at entry, and again between each relatio
 await loading // rejects with a DatabaseError('ABORTED', …)
 ```
 
-Cancellation is cooperative between queries, not mid-query — `checkAbort` (re-exported by `@orkestrel/database`) is checked before the populate loop starts and again before each relation's batched fetch; an already-aborted signal throws immediately, before any query runs.
+Cancellation is cooperative between queries, not mid-query — `checkAbort` (exported by `@orkestrel/database`) is checked before the populate loop starts and again before each relation's batched fetch; an already-aborted signal throws immediately, before any query runs.
 
 ### Observing
 
