@@ -64,7 +64,7 @@
 	},
 	"dependencies": {
 		"@orkestrel/contract": "^0.0.1",
-		"@orkestrel/database": "^0.0.1",
+		"@orkestrel/database": "^0.0.2",
 		"@orkestrel/emitter": "^0.0.1"
 	},
 	"devDependencies": {
