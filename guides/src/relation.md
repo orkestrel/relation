@@ -17,7 +17,7 @@ const manager = createRelationManager({
 		accounts: {
 			classification: belongsTo('classificationId', 'classifications'), // FK on accounts → one classification
 			contacts: hasMany('accountId'), // FK on contacts → many contacts back here
-			reps: hasThrough('accountReps', 'accountId', 'repId', 'reps'), // many-to-many via a junction
+			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // many-to-many via a junction
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') }, // so contacts can nest-load its account
 	},
@@ -140,7 +140,7 @@ const manager = createRelationManager({
 			classification: belongsTo('classificationId', 'classifications'), // FK on accounts
 			contacts: hasMany('accountId'), // FK on contacts → accounts
 			profile: hasOne('accountId', 'profiles'), // single, FK on profiles
-			reps: hasThrough('accountReps', 'accountId', 'repId', 'reps'), // via junction
+			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // via junction
 			notes: hasMorph('entityId', 'entityType', 'account', 'notes'), // polymorphic
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') },
@@ -216,7 +216,7 @@ const acme = await accounts.load('acc1', { contacts: true, classification: true 
 
 // Many records — sorted and paged — with relations attached to the page:
 const page = await accounts.find(
-	{ reps: true },
+	{ representatives: true },
 	{ sort: 'name', direction: 'ascending', limit: 10 },
 )
 
@@ -243,9 +243,9 @@ await accounts.table.query().where('name').starts('A').all()
 A `through` relation's junction rows are managed by key — no need to model the junction table yourself or hand-write join rows. `link` / `unlink` / `links` resolve the relation's junction table + its source/target columns from the define-time `ResolvedRelation`, and throw `NOT_THROUGH` if pointed at a non-`through` relation.
 
 ```ts
-await accounts.link('acc1', 'reps', 'rep3') // insert a junction row (accountId=acc1, repId=rep3)
-await accounts.unlink('acc1', 'reps', 'rep1') // remove the matching junction row(s)
-const repIds = await accounts.links('acc1', 'reps') // the related keys reachable via the junction
+await accounts.link('acc1', 'representatives', 'rep3') // insert a junction row (accountId=acc1, repId=rep3)
+await accounts.unlink('acc1', 'representatives', 'rep1') // remove the matching junction row(s)
+const repIds = await accounts.links('acc1', 'representatives') // the related keys reachable via the junction
 ```
 
 ### Observing
