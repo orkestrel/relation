@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/relation",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"description": "A typed relation manager over database tables — batched eager loading and junction management, environment-agnostic. Part of the @orkestrel line.",
 	"keywords": [
 		"database",
@@ -63,7 +63,7 @@
 		"prepublishOnly": "npm run format:check && npm run lint:check && npm run check && npm run build && npm test"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.2",
+		"@orkestrel/contract": "^0.0.3",
 		"@orkestrel/database": "^0.0.4",
 		"@orkestrel/emitter": "^0.0.2"
 	},
