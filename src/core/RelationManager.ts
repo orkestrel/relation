@@ -58,7 +58,7 @@ export class RelationManager<
 
 	// Construct a model over an opaque row type `R`, so `RowOf<T[K]>` is not
 	// expanded structurally here (the instantiation-depth guard `db.table` sidesteps).
-	#vend<R extends object>(
+	#vend<R>(
 		name: string,
 		table: TableInterface<R>,
 		resolved: ReadonlyMap<string, ResolvedRelation>,

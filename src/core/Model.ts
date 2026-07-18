@@ -38,7 +38,7 @@ import { RelationError } from './errors.js'
  *   never corrupt the batched eager-load (no N+1 in the events either — one `load` per
  *   relation, not per record).
  */
-export class Model<T extends object = Row> implements ModelInterface<T> {
+export class Model<T = Row> implements ModelInterface<T> {
 	readonly #name: string
 	readonly #table: TableInterface<T>
 	readonly #resolved: ReadonlyMap<string, ResolvedRelation>
@@ -169,7 +169,8 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	// === Private
 
 	// Read a column off any record (the base row's type is closed — no index access).
-	#field(record: object, column: string): unknown {
+	#field(record: unknown, column: string): unknown {
+		if (typeof record !== 'object' || record === null) return undefined
 		return Reflect.get(record, column)
 	}
 
@@ -195,7 +196,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 
 	// Compute the relation properties for each record (parallel to `records`).
 	async #populate(
-		records: readonly object[],
+		records: readonly unknown[],
 		include: Include,
 		resolvedMap: ReadonlyMap<string, ResolvedRelation>,
 		primary: string,
@@ -231,7 +232,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 
 	// Dispatch one relation to its loader, returning a value per record.
 	async #load(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
@@ -251,7 +252,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	}
 
 	async #loadBelongs(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 	): Promise<(Row | undefined)[]> {
@@ -270,7 +271,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	}
 
 	async #loadMany(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
@@ -286,7 +287,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	}
 
 	async #loadOne(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
@@ -296,7 +297,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	}
 
 	async #loadThrough(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
@@ -341,7 +342,7 @@ export class Model<T extends object = Row> implements ModelInterface<T> {
 	}
 
 	async #loadMorph(
-		records: readonly object[],
+		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,

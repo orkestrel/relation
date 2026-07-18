@@ -229,7 +229,15 @@ export interface ModelInterface<T = Row> {
 
 /** Options for `createRelationManager`. */
 export interface RelationManagerOptions<T extends TablesShape = TablesShape> {
-	readonly database: DatabaseInterface<T>
+	/**
+	 * The database to build the registry over.
+	 *
+	 * @remarks
+	 * Intersected with the broad `DatabaseInterface` so the manager gets both the
+	 * precise view (typing each declared table for `model()`) and the broad view
+	 * (runtime table lookup by name while resolving relations).
+	 */
+	readonly database: DatabaseInterface<T> & DatabaseInterface
 	readonly relations?: RelationsShape<T>
 }
 
