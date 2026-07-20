@@ -9,7 +9,7 @@
 Create a manager over a database and its relation map, then reach a typed model and load with relations attached:
 
 ```ts
-import { createRelationManager, belongsTo, hasMany, hasThrough } from '@src/core'
+import { createRelationManager, belongsTo, hasMany, hasThrough } from '@orkestrel/relation'
 
 const manager = createRelationManager({
 	database: db, // a typed DatabaseInterface from createDatabase(...)
@@ -131,7 +131,14 @@ Typing each loaded relation property to its exact target row (Prisma-style) is a
 ### Defining relations
 
 ```ts
-import { createRelationManager, belongsTo, hasMany, hasOne, hasThrough, hasMorph } from '@src/core'
+import {
+	createRelationManager,
+	belongsTo,
+	hasMany,
+	hasOne,
+	hasThrough,
+	hasMorph,
+} from '@orkestrel/relation'
 
 const manager = createRelationManager({
 	database: db,
@@ -171,7 +178,7 @@ The relation kinds, and where each foreign key lives:
 `resolveRelation` / `resolveRelationMap` / `isRelationDescriptor` are what `createRelationManager` calls internally to turn a raw `RelationMap` into `ResolvedRelation`s at construction — reach for them directly when validating a relation map before wiring a manager, or when testing a descriptor's inferred `relationship`:
 
 ```ts
-import { isRelationDescriptor, resolveRelation, resolveRelationMap } from '@src/core'
+import { isRelationDescriptor, resolveRelation, resolveRelationMap } from '@orkestrel/relation'
 
 const resolved = resolveRelation('classification', belongsTo('classificationId', 'classifications'))
 resolved.relationship // 'belongs'
@@ -185,7 +192,7 @@ isRelationDescriptor(belongsTo('classificationId')) // true — the object form
 Catch a malformed relation with `isRelationError`, branching on its machine-readable `code`:
 
 ```ts
-import { isRelationError } from '@src/core'
+import { isRelationError } from '@orkestrel/relation'
 
 try {
 	resolveRelation('bad', {})
