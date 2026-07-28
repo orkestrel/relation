@@ -23,7 +23,7 @@ export class RelationError extends Error {
 		super(message)
 		this.name = 'RelationError'
 		this.code = code
-		this.context = context
+		if (context !== undefined) this.context = context
 	}
 }
 

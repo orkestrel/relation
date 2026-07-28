@@ -66,7 +66,10 @@ export class Model<T = Row> implements ModelInterface<T> {
 		this.#relations = relations
 		this.#lookup = lookup
 		this.#database = database
-		this.#emitter = new Emitter<ModelEventMap>({ on, error })
+		this.#emitter = new Emitter<ModelEventMap>({
+			...(on !== undefined ? { on } : {}),
+			...(error !== undefined ? { error } : {}),
+		})
 	}
 
 	get emitter(): EmitterInterface<ModelEventMap> {
@@ -208,7 +211,8 @@ export class Model<T = Row> implements ModelInterface<T> {
 			if (resolved === undefined) continue
 			const values = await this.#load(records, resolved, sub, primary)
 			values.forEach((value, index) => {
-				props[index][resolved.name] = value
+				const target = props[index]
+				if (target !== undefined) target[resolved.name] = value
 			})
 			// Observe this relation's eager-load — AFTER it resolved + was attached, ONCE per
 			// relation (not per record — the batched load has no N+1, nor do its events),

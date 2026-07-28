@@ -65,53 +65,82 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 
 	const model = value.model ?? name
 	// Inferred from the fields present when no explicit `relationship` is set.
-	const infer = (): Relationship => {
-		if (isDefined(value.through)) return 'through'
-		if (isDefined(value.tag)) return 'morph'
-		if (isDefined(value.column)) return 'belongs'
-		if (isDefined(value.key)) return 'one'
+	let relationship: Relationship
+	if (value.relationship !== undefined) {
+		relationship = value.relationship
+	} else if (isDefined(value.through)) {
+		relationship = 'through'
+	} else if (isDefined(value.tag)) {
+		relationship = 'morph'
+	} else if (isDefined(value.column)) {
+		relationship = 'belongs'
+	} else if (isDefined(value.key)) {
+		relationship = 'one'
+	} else {
 		throw new RelationError(
 			'INVALID',
 			`Relation '${name}': cannot infer relationship from descriptor`,
 			{ relation: name },
 		)
 	}
-	const relationship = value.relationship ?? infer()
-	const require = (present: boolean, fields: string): void => {
-		if (!present) {
-			throw new RelationError('INVALID', `Relation '${name}': ${relationship} needs ${fields}`, {
-				relation: name,
-			})
-		}
-	}
 
 	switch (relationship) {
-		case 'belongs':
-			require(isDefined(value.column), `'column'`)
-			return { relationship, name, model, column: value.column }
-		case 'many':
-			require(isDefined(value.key), `'key'`)
-			return { relationship, name, model, key: value.key }
-		case 'one':
-			require(isDefined(value.key), `'key'`)
-			return { relationship, name, model, key: value.key }
-		case 'through':
-			require(isDefined(value.through) &&
-				isDefined(value.source) &&
-				isDefined(value.target), `'through', 'source', and 'target'`)
+		case 'belongs': {
+			const column = value.column
+			if (column === undefined) {
+				throw new RelationError('INVALID', `Relation '${name}': belongs needs 'column'`, {
+					relation: name,
+				})
+			}
+			return { relationship, name, model, column }
+		}
+		case 'many': {
+			const key = value.key
+			if (key === undefined) {
+				throw new RelationError('INVALID', `Relation '${name}': many needs 'key'`, {
+					relation: name,
+				})
+			}
+			return { relationship, name, model, key }
+		}
+		case 'one': {
+			const key = value.key
+			if (key === undefined) {
+				throw new RelationError('INVALID', `Relation '${name}': one needs 'key'`, {
+					relation: name,
+				})
+			}
+			return { relationship, name, model, key }
+		}
+		case 'through': {
+			const { through, source, target } = value
+			if (through === undefined || source === undefined || target === undefined) {
+				throw new RelationError(
+					'INVALID',
+					`Relation '${name}': through needs 'through', 'source', and 'target'`,
+					{ relation: name },
+				)
+			}
 			return {
 				relationship,
 				name,
 				model,
-				through: value.through,
-				source: value.source,
-				target: value.target,
+				through,
+				source,
+				target,
 			}
-		case 'morph':
-			require(isDefined(value.key) &&
-				isDefined(value.tag) &&
-				isDefined(value.label), `'key', 'tag', and 'label'`)
-			return { relationship, name, model, key: value.key, tag: value.tag, label: value.label }
+		}
+		case 'morph': {
+			const { key, tag, label } = value
+			if (key === undefined || tag === undefined || label === undefined) {
+				throw new RelationError(
+					'INVALID',
+					`Relation '${name}': morph needs 'key', 'tag', and 'label'`,
+					{ relation: name },
+				)
+			}
+			return { relationship, name, model, key, tag, label }
+		}
 	}
 }
 
