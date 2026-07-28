@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/relation",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "A typed relation manager over database tables — batched eager loading and junction management, environment-agnostic. Part of the @orkestrel line.",
 	"keywords": [
 		"database",
@@ -71,11 +71,11 @@
 	"devDependencies": {
 		"@microsoft/api-extractor": "^7.58.12",
 		"@orkestrel/guide": "^0.0.5",
-		"@orkestrel/scaffold": "^0.0.5",
-		"@types/node": "^26.1.1",
+		"@orkestrel/scaffold": "^0.0.6",
+		"@types/node": "^26.1.2",
 		"@vitest/browser-playwright": "^4.1.10",
-		"oxfmt": "^0.60.0",
-		"oxlint": "^1.75.0",
+		"oxfmt": "^0.61.0",
+		"oxlint": "^1.76.0",
 		"typescript": "^6.0.3",
 		"vite": "^8.1.5",
 		"vite-plugin-dts": "^5.0.3",
