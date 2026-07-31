@@ -23,10 +23,6 @@ function one(value: unknown): Row {
 async function setup() {
 	const db = createDatabase({
 		driver: createMemoryDriver(),
-		// `accountReps` junction rows are written by `Model.link` without an `id` —
-		// a key factory mints one (the accounts / contacts / etc. tables always pass
-		// an explicit `id`, so this only ever fires for the junction table).
-		key: () => crypto.randomUUID(),
 		tables: {
 			accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
 			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
@@ -160,10 +156,16 @@ describe('Model — load (batch)', () => {
 describe('Model — find', () => {
 	it('loads relations across a sorted, paged set', async () => {
 		const { accounts } = await setup()
-		const page = await accounts.find({ contacts: true }, { sort: 'name', direction: 'ascending' })
+		const page = await accounts.find({ contacts: true }, { sort: 'name' })
 		expect(page.map((a) => a.name)).toEqual(['Acme', 'Beta'])
 		expect(rows(page[0]?.contacts)).toHaveLength(2) // Acme
 		expect(rows(page[1]?.contacts)).toHaveLength(0) // Beta
+	})
+
+	it('sorts descending when explicitly requested', async () => {
+		const { accounts } = await setup()
+		const page = await accounts.find({}, { sort: 'name', direction: 'descending' })
+		expect(page.map((a) => a.name)).toEqual(['Beta', 'Acme'])
 	})
 
 	it('honors limit / offset', async () => {
@@ -211,7 +213,7 @@ describe('Model — through management', () => {
 // The ModelEventMap event names recorded across the emitter tests — fed to the shared
 // `recordEmitterEvents` (AGENTS §16.1: the per-event wiring is centralized; this file
 // keeps only the names its scenarios observe).
-const MODEL_EVENTS = ['load', 'link', 'unlink'] as const
+const MODEL_EVENTS: readonly ['load', 'link', 'unlink'] = ['load', 'link', 'unlink']
 
 describe('Model — emitter (push observation surface)', () => {
 	it('fires load once per relation with the count of rows attached across the record set', async () => {

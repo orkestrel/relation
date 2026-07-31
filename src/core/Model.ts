@@ -22,11 +22,11 @@ import { RelationError } from './errors.js'
  * @remarks
  * The model's own table is fully typed (`table`); related tables are reached by
  * runtime name through the database at the broad `Row` type. Loading is batched:
- * for each relation, one query fetches the related rows for the whole record set
- * (`where(col).any(keys)`), grouped in memory and attached — no N+1. Nested
- * includes recurse through the registry `lookup`, so loaded relations carry their
- * own loaded relations. Columns are read with `Reflect.get` (the base row's type
- * is closed) and relation properties merged with `Object.assign` — no `as`.
+ * a direct relation uses one query for the whole record set, while a `through`
+ * relation uses two (junction then target); both counts remain constant regardless
+ * of parent count. Nested includes recurse through the registry `lookup`, so each
+ * nested level is batched again. Columns are read with `Reflect.get` (the base row's
+ * type is closed) and relation properties merged with `Object.assign` — no `as`.
  *
  * @remarks
  * - **Observable (§13).** The owned {@link emitter} ({@link ModelEventMap}) carries the
@@ -113,12 +113,14 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async find(include: Include, options?: FindOptions): Promise<readonly Loaded<T>[]> {
 		const query = this.#table.query()
 		if (options?.sort !== undefined) {
-			if (options.direction === 'descending') query.descending(options.sort)
-			else query.ascending(options.sort)
+			query.order({
+				column: options.sort,
+				direction: options.direction ?? 'ascending',
+			})
 		}
 		if (options?.offset !== undefined) query.offset(options.offset)
 		if (options?.limit !== undefined) query.limit(options.limit)
-		const records = await query.all()
+		const records = await query.collect()
 		const props = await this.#populate(records, include, this.#resolved, this.#table.primary)
 		return records.map((record, index) => Object.assign({}, record, props[index]))
 	}
@@ -139,11 +141,19 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const junction = this.#database.table(resolved.through ?? '')
 		const rows = await junction
 			.query()
-			.where(resolved.source ?? '')
-			.equals(key)
-			.and(resolved.target ?? '')
-			.equals(target)
-			.all()
+			.condition({
+				column: resolved.source ?? '',
+				operator: 'equals',
+				values: [key],
+				connector: 'and',
+			})
+			.condition({
+				column: resolved.target ?? '',
+				operator: 'equals',
+				values: [target],
+				connector: 'and',
+			})
+			.collect()
 		for (const row of rows) {
 			const id = extractKey(row, junction.primary)
 			if (id !== undefined) await junction.remove(id)
@@ -157,9 +167,13 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const junction = this.#database.table(resolved.through ?? '')
 		const rows = await junction
 			.query()
-			.where(resolved.source ?? '')
-			.equals(key)
-			.all()
+			.condition({
+				column: resolved.source ?? '',
+				operator: 'equals',
+				values: [key],
+				connector: 'and',
+			})
+			.collect()
 		const target = resolved.target ?? ''
 		const keys: Key[] = []
 		for (const row of rows) {
@@ -266,7 +280,15 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (keys.length === 0) return records.map(() => undefined)
 		const related = this.#database.table(resolved.model)
-		const rows = await related.query().where(related.primary).any(keys).all()
+		const rows = await related
+			.query()
+			.condition({
+				column: related.primary,
+				operator: 'any',
+				values: keys,
+				connector: 'and',
+			})
+			.collect()
 		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
 		return records.map((record) => {
 			const fk = this.#field(record, column)
@@ -285,7 +307,11 @@ export class Model<T = Row> implements ModelInterface<T> {
 			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
-		const rows = await this.#database.table(resolved.model).query().where(foreign).any(keys).all()
+		const rows = await this.#database
+			.table(resolved.model)
+			.query()
+			.condition({ column: foreign, operator: 'any', values: keys, connector: 'and' })
+			.collect()
 		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}
@@ -316,9 +342,8 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const junctions = await this.#database
 			.table(resolved.through ?? '')
 			.query()
-			.where(source)
-			.any(parents)
-			.all()
+			.condition({ column: source, operator: 'any', values: parents, connector: 'and' })
+			.collect()
 		const targetsBySource = new Map<string, unknown[]>()
 		for (const junction of junctions) {
 			const value = this.#field(junction, target)
@@ -332,7 +357,15 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const targets = [...new Set([...targetsBySource.values()].flat())]
 		if (targets.length === 0) return records.map(() => [])
 		const related = this.#database.table(resolved.model)
-		const rows = await related.query().where(related.primary).any(targets).all()
+		const rows = await related
+			.query()
+			.condition({
+				column: related.primary,
+				operator: 'any',
+				values: targets,
+				connector: 'and',
+			})
+			.collect()
 		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
 
 		return records.map((record) => {
@@ -359,11 +392,14 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const rows = await this.#database
 			.table(resolved.model)
 			.query()
-			.where(foreign)
-			.any(keys)
-			.and(resolved.tag ?? '')
-			.equals(resolved.label ?? '')
-			.all()
+			.condition({ column: foreign, operator: 'any', values: keys, connector: 'and' })
+			.condition({
+				column: resolved.tag ?? '',
+				operator: 'equals',
+				values: [resolved.label ?? ''],
+				connector: 'and',
+			})
+			.collect()
 		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}

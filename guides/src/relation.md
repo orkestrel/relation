@@ -1,6 +1,6 @@
 # Relation
 
-> A small, declarative ORM layer over the [database](database.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — one query per relation across the whole record set (`where(col).any(keys)`), grouped in memory and merged on — so a hundred parents cost the same number of round-trips as one. Five relation kinds (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
+> A small, declarative ORM layer over the [database](database.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — a direct relation uses one query across the whole record set, while a `through` relation uses two (junction then target); either count stays constant as the parent count grows. Five relation kinds (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
 >
 > It deliberately stays **thin above the typed store**. Resolution is define-time (each relation is precomputed once into a flat `ResolvedRelation` — nothing is inferred while loading), and the loaded relation properties are intentionally **loose** (`Row | readonly Row[] | undefined`) rather than typed to each exact target row: the typed half is the table reached through `model.table`; relation loading is the looser convenience on top. No write-cascades, no lazy proxies, no query builder of its own — just batched eager loading and junction management. Source: [`src/core`](../../src/core). Surfaced through the `@src/core` barrel.
 
@@ -80,7 +80,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 | `Loaded`                   | type      | `T & Record<string, Row \| readonly Row[] \| undefined>` — a row with relations attached.                         |
 | `RelationProps`            | type      | `Record<string, Row \| readonly Row[] \| undefined>` — the relation-property bag of a `Loaded` row.               |
 | `RelationContext`          | interface | `{ resolved, primary }` — a related model's resolved relations + primary, for nesting.                            |
-| `FindOptions`              | interface | `{ limit?, offset?, sort?, direction? }` — pagination and ordering for `find`.                                    |
+| `FindOptions`              | interface | `{ limit?, offset?, sort?, direction? }` — pagination and ordering for `find`; direction defaults to ascending.   |
 | `ModelEventMap`            | type      | A model's push observation surface (§13) — `load(name, count)` · `link(key, relation)` · `unlink(key, relation)`. |
 | `ModelInterface`           | interface | `emitter` / `name` / `table` / `relations` + `load` / `find` / `link` / `unlink` / `links`.                       |
 | `RelationManagerOptions`   | interface | `{ database, relations? }` — input to `createRelationManager`.                                                    |
@@ -92,7 +92,7 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `ModelInterface`
 
-`load` / `find` batch-load (one query per relation regardless of result size); `link` / `unlink` / `links` manage a `through` relation's junction rows.
+`load` / `find` batch-load (one query for a direct relation, two for `through`, regardless of result size); `link` / `unlink` / `links` manage a `through` relation's junction rows.
 
 | Method   | Returns                                      | Behavior                                                  |
 | -------- | -------------------------------------------- | --------------------------------------------------------- |
@@ -118,7 +118,7 @@ These invariants hold across `src/core` ↔ `relation.md`:
 
 1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` / `type` row in the `## Surface` tables is a real export of the relations source tree, and every export appears as a Surface row — exhaustive, both directions (AGENTS §22).
 2. **Layered on the typed database.** A manager is built over a `DatabaseInterface`; `model(name)` is checked against the database's declared tables and returns a model whose `table` is that table's typed `TableInterface` (a declared table with no relation entry yields a relation-less model — still fully usable for typed CRUD). Related tables are fetched by runtime name at the broad `Row` type — the load layer is deliberately loose above the typed store, and a relation pointing at a missing table fails the first time that relation loads, not at construction.
-3. **Batch loading — no N+1.** For each included relation, one query fetches the related rows for the entire record set (`where(col).any(keys)` over the distinct foreign keys); they are grouped in memory and attached. The cost is one query per relation, independent of how many parents were loaded. Nested includes recurse through the registry, so a loaded relation carries its own loaded relations — each nested level is again one batched query.
+3. **Batch loading — no N+1.** A direct included relation uses one query over the distinct foreign keys for the entire record set; a `through` relation uses two queries, one for the junction rows and one for the target rows. Related rows are grouped in memory and attached, so either query count is independent of how many parents were loaded. Nested includes recurse through the registry, and each nested level is batched again under the same rule.
 4. **Resolution is define-time.** Each raw `Relation` is resolved once at construction into a flat `ResolvedRelation`; nothing is inferred during loading. The builders set an explicit `relationship` (so `many` and `one`, otherwise identical as `{ key }`, are unambiguous); a hand-written descriptor with no `relationship` infers one from the fields present (`through` → `through`, `tag` → `morph`, `column` → `belongs`, else `key` → `one`), and a malformed one throws `INVALID` at define-time.
 5. **Total, loose `Loaded`.** `Loaded<T>` is the base row (the table's row type) intersected with the broad relation bag `Readonly<RelationProps>` (`Row | readonly Row[] | undefined` per relation); a missed `belongs` / `one` is `undefined`, a missed `many` / `through` / `morph` is `[]`. Through-only operations (`link` / `unlink` / `links`) throw `NOT_THROUGH` on any other kind and `UNKNOWN_RELATION` for a relation the model never declared.
 6. **Observation is a pure side-channel (§13).** A `Model` owns a typed `emitter` (`ModelEventMap` — `load(name, count)` / `link(key, relation)` / `unlink(key, relation)`); `RelationManager` is event-free by design (a stateless registry has no observable lifecycle). Every event is emitted directly (the AGENTS §13 convention: the emitter isolates a listener throw, routing it to its OWN `error` handler — the `error` option, surfaced as `(error, event)`, NOT a domain event — itself re-entrancy-guarded) strictly AFTER the load resolves / the junction op completes. `load` fires ONCE per relation (carrying the count of rows attached across the record set — no N+1 in the events), so a buggy observer can corrupt neither the batched eager-load nor a junction write (proven by the emit-safety tests).
@@ -230,8 +230,8 @@ const page = await accounts.find(
 // Nested includes — load a relation's own relations (recurses through the registry):
 const deep = await accounts.load('acc1', { contacts: { account: true } })
 
-// Batch by key array: an array in, an array out — and the relation fetch is STILL
-// one query per relation across all parents (no N+1), not one per key.
+// Batch by key array: an array in, an array out — and this direct-relation fetch is
+// STILL one query across all parents (no N+1), not one per key.
 const [a, b] = await accounts.load(['acc1', 'acc2'], { contacts: true })
 ```
 
@@ -242,7 +242,10 @@ For writes and plain queries, drop through to `model.table` — the full typed `
 ```ts
 const accounts = manager.model('accounts')
 await accounts.table.set({ id: 'acc4', name: 'New Corp', classificationId: 'cls1' }) // fully typed
-await accounts.table.query().where('name').starts('A').all()
+await accounts.table
+	.query()
+	.condition({ column: 'name', operator: 'starts', values: ['A'], connector: 'and' })
+	.collect()
 ```
 
 ### Through management
@@ -280,7 +283,7 @@ The event vocabulary:
 - **Define all related models up front** — nested includes resolve through the registry, so a relation you want to nest-load must have its own entry.
 - **Use the builders** — `belongsTo` / `hasMany` / `hasOne` / `hasThrough` / `hasMorph` set an explicit `relationship`; the string / array shorthands are unambiguous, but a raw `{ key }` resolves to `one`.
 - **Reach for typed CRUD through `model.table`** — the table is fully typed; relation loading is the looser layer on top.
-- **Request only the relations you use** — each included relation is one extra query.
+- **Request only the relations you use** — each direct relation adds one query; each `through` relation adds two.
 - **Use `link` / `unlink` / `links` for `through` joins** rather than writing junction rows by hand.
 - **Observe, don't drive** — subscribe to `model.emitter` (`load` / `link` / `unlink`) for metrics or a sync layer (see [Observing](#observing)); emitting is a pure side-channel, so a listener never changes what a load does (and a throwing one can't corrupt it).
 

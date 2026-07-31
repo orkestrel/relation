@@ -1,5 +1,5 @@
 import type { RelationManagerInterface, RelationManagerOptions } from './types.js'
-import type { TablesShape } from '@orkestrel/database'
+import type { TableMap } from '@orkestrel/database'
 import { RelationManager } from './RelationManager.js'
 
 /**
@@ -28,7 +28,7 @@ import { RelationManager } from './RelationManager.js'
  * const acme = await manager.model('accounts').load('acc1', { contacts: true, classification: true })
  * ```
  */
-export function createRelationManager<T extends TablesShape>(
+export function createRelationManager<T extends TableMap>(
 	options: RelationManagerOptions<T>,
 ): RelationManagerInterface<T> {
 	return new RelationManager(options)

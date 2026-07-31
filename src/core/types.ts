@@ -1,20 +1,20 @@
 import type {
 	DatabaseInterface,
-	Direction,
 	Key,
+	OrderDirection,
 	Row,
 	RowOf,
 	TableInterface,
-	TablesShape,
+	TableMap,
 } from '@orkestrel/database'
 import type { EmitterInterface } from '@orkestrel/emitter'
 
 // Relations — ORM-style eager loading layered on the database. A relation
 // manager is created over a database and a declarative map of per-table
 // relations; each model pairs a typed table with relation-aware `load` / `find`
-// and through-table management. Loading is batched (one query per relation over
-// the whole record set, grouped in memory — no N+1). Types are the source of
-// truth (AGENTS §2).
+// and through-table management. Loading is batched (one query per direct relation
+// or two per through relation over the whole record set, grouped in memory — no
+// N+1). Types are the source of truth (AGENTS §2).
 
 // === Relation kinds & descriptors
 
@@ -77,7 +77,7 @@ export type RelationErrorCode = 'INVALID' | 'UNKNOWN_RELATION' | 'NOT_THROUGH'
  * Keys are constrained to the database's declared table names, so relations can
  * only be defined for tables that exist. A table may be omitted (no relations).
  */
-export type RelationsShape<T extends TablesShape = TablesShape> = {
+export type RelationsShape<T extends TableMap = TableMap> = {
 	readonly [K in keyof T]?: RelationMap
 }
 
@@ -161,7 +161,8 @@ export interface FindOptions {
 	readonly limit?: number
 	readonly offset?: number
 	readonly sort?: string
-	readonly direction?: Direction
+	/** The sort direction; defaults to `ascending` when {@link sort} is present. */
+	readonly direction?: OrderDirection
 }
 
 // === Model
@@ -206,8 +207,9 @@ export type ModelEventMap<TKey extends Key = Key> = {
  * Table operations are reached through `table` (a fully typed
  * {@link TableInterface}); relation loading and through management are on the
  * model itself. `load` fetches one record with its relations populated; `find`
- * fetches many; both batch-load (one query per relation regardless of result
- * size). `link` / `unlink` / `links` manage a `through` relation's junction rows.
+ * fetches many; both batch-load (one query per direct relation or two per
+ * `through`, regardless of result size). `link` / `unlink` / `links` manage a
+ * `through` relation's junction rows.
  * Exposes a typed {@link emitter} (AGENTS §13) carrying the eager-load + junction
  * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
@@ -228,7 +230,7 @@ export interface ModelInterface<T = Row> {
 // === Manager
 
 /** Options for `createRelationManager`. */
-export interface RelationManagerOptions<T extends TablesShape = TablesShape> {
+export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	/**
 	 * The database to build the registry over.
 	 *
@@ -249,7 +251,7 @@ export interface RelationManagerOptions<T extends TablesShape = TablesShape> {
  * at construction. `model(name)` returns the model for a declared table, typed by
  * that table's row. Follows the manager accessor pattern (`model` / `models`).
  */
-export interface RelationManagerInterface<T extends TablesShape = TablesShape> {
+export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number
 	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>>
 	models(): readonly string[]

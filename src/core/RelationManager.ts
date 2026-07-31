@@ -1,4 +1,4 @@
-import type { DatabaseInterface, RowOf, TableInterface, TablesShape } from '@orkestrel/database'
+import type { DatabaseInterface, RowOf, TableInterface, TableMap } from '@orkestrel/database'
 import type {
 	ModelInterface,
 	RelationContext,
@@ -21,9 +21,7 @@ import { Model } from './Model.js'
  * while loading). Relation targets are validated lazily — a relation to a missing
  * table fails when that relation is first loaded.
  */
-export class RelationManager<
-	T extends TablesShape = TablesShape,
-> implements RelationManagerInterface<T> {
+export class RelationManager<T extends TableMap = TableMap> implements RelationManagerInterface<T> {
 	readonly #database: DatabaseInterface<T>
 	readonly #broad: DatabaseInterface
 	readonly #relations: RelationsShape<T>

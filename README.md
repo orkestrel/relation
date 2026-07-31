@@ -2,9 +2,10 @@
 
 A typed **relation manager** over [`@orkestrel/database`](https://github.com/orkestrel/database)
 tables — name a table's relations once, then `load` / `find` records with their
-related rows already attached. Loading is **batched** — one query per relation
-across the whole record set, grouped in memory and merged on — so a hundred
-parents cost the same number of round-trips as one. Five relation kinds
+related rows already attached. Loading is **batched** — a direct relation uses
+one query across the whole record set, while a `through` relation uses two
+(junction then target); either count stays constant as the parent count grows.
+Five relation kinds
 (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested
 includes recurse through the registry; `link` / `unlink` / `links` manage a
 many-to-many junction without hand-writing join rows. Environment-agnostic —
