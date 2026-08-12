@@ -4,14 +4,14 @@ A dual-axis index into this repository's guides — by concept, and by directory
 
 ## By concept
 
-| Concept  | Spec                                 | Source                    | Tests                                 |
-| -------- | ------------------------------------ | ------------------------- | ------------------------------------- |
+| Concept  | Spec                         | Source                    | Tests                                 |
+| -------- | ---------------------------- | ------------------------- | ------------------------------------- |
 | Relation | [`relation.md`](relation.md) | [`src/core`](../src/core) | [`tests/src/core`](../tests/src/core) |
 
 ## By directory
 
-| Directory  | Guide                                |
-| ---------- | ------------------------------------ |
+| Directory  | Guide                        |
+| ---------- | ---------------------------- |
 | `src/core` | [`relation.md`](relation.md) |
 
 ## Dependency reference
