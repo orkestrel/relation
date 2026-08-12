@@ -289,7 +289,7 @@ The event vocabulary:
 
 ## Tests
 
-- [`tests/guides/src/parity.test.ts`](../../tests/guides/src/parity.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports).
+- [`tests/guides.test.ts`](../../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports).
 - [`tests/src/core/helpers.test.ts`](../../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `isRelationDescriptor`.
 - [`tests/src/core/RelationManager.test.ts`](../../tests/src/core/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `models` / `has`) and the typed `model(name)` accessor.
 - [`tests/src/core/Model.test.ts`](../../tests/src/core/Model.test.ts) — `Model` behavior: `load` / `find` populating each relation kind (batched, no N+1), nested `includes`, the loaded relation accessors, `link` / `unlink` / `links` junction management, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it; a `Model` reached via the `RelationManager` has no `error` handler, so the throw is swallowed silently).
