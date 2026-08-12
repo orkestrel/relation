@@ -220,8 +220,8 @@ export interface ModelInterface<T = Row> {
 	readonly table: TableInterface<T>
 	readonly relations: RelationMap
 	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<readonly (Loaded<T> | undefined)[]>
-	find(include: Include, options?: FindOptions): Promise<readonly Loaded<T>[]>
+	load(keys: readonly Key[], include: Include): Promise<ReadonlyArray<Loaded<T> | undefined>>
+	find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>>
 	link(key: Key, relation: string, target: Key): Promise<void>
 	unlink(key: Key, relation: string, target: Key): Promise<void>
 	links(key: Key, relation: string): Promise<readonly Key[]>

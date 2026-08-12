@@ -89,11 +89,11 @@ export class Model<T = Row> implements ModelInterface<T> {
 	}
 
 	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<readonly (Loaded<T> | undefined)[]>
+	load(keys: readonly Key[], include: Include): Promise<ReadonlyArray<Loaded<T> | undefined>>
 	async load(
 		keys: Key | readonly Key[],
 		include: Include,
-	): Promise<(Loaded<T> | undefined) | readonly (Loaded<T> | undefined)[]> {
+	): Promise<(Loaded<T> | undefined) | ReadonlyArray<Loaded<T> | undefined>> {
 		if (isArray(keys)) {
 			// Batch: one `get`, then one populate over all present rows (no N+1).
 			const bases = await this.#table.get(keys)
@@ -110,7 +110,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		return Object.assign({}, base, props)
 	}
 
-	async find(include: Include, options?: FindOptions): Promise<readonly Loaded<T>[]> {
+	async find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>> {
 		const query = this.#table.query()
 		if (options?.sort !== undefined) {
 			query.order({
@@ -239,7 +239,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	// The total related rows a relation's values attached across the record set — an
 	// array-valued relation (`many` / `through` / `morph`) sums its lengths, a single-
 	// valued one (`belongs` / `one`) counts each present row. The `load` event's `count`.
-	#attached(values: readonly (Row | readonly Row[] | undefined)[]): number {
+	#attached(values: ReadonlyArray<Row | readonly Row[] | undefined>): number {
 		let total = 0
 		for (const value of values) {
 			if (isArray(value)) total += value.length
@@ -254,7 +254,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
-	): Promise<(Row | readonly Row[] | undefined)[]> {
+	): Promise<Array<Row | readonly Row[] | undefined>> {
 		switch (resolved.relationship) {
 			case 'belongs':
 				return this.#loadBelongs(records, resolved, sub)
@@ -273,7 +273,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
-	): Promise<(Row | undefined)[]> {
+	): Promise<Array<Row | undefined>> {
 		const column = resolved.column ?? ''
 		const keys = [
 			...new Set(records.map((record) => this.#field(record, column)).filter(isDefined)),
@@ -301,7 +301,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
-	): Promise<(readonly Row[])[]> {
+	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
 			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
@@ -321,7 +321,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
-	): Promise<(Row | undefined)[]> {
+	): Promise<Array<Row | undefined>> {
 		const groups = await this.#loadMany(records, resolved, sub, primary)
 		return groups.map((group) => (group.length > 0 ? group[0] : undefined))
 	}
@@ -331,7 +331,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
-	): Promise<(readonly Row[])[]> {
+	): Promise<Array<readonly Row[]>> {
 		const source = resolved.source ?? ''
 		const target = resolved.target ?? ''
 		const parents = [
@@ -383,7 +383,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
-	): Promise<(readonly Row[])[]> {
+	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
 			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
