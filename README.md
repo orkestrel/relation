@@ -66,7 +66,7 @@ read them.
 For the full surface — the manager, the `Model`, the relation builders
 (`belongsTo` / `hasMany` / `hasOne` / `hasThrough` / `hasMorph`), resolution,
 errors, and the observation surface — see
-[`guides/src/relation.md`](guides/src/relation.md).
+[`guides/relation.md`](guides/relation.md).
 
 ## Package
 

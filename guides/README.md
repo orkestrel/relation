@@ -41,6 +41,13 @@ surface (`Guide` / `Source`, the manifest and comparison helpers), not anything
 sourced in this repo; it is kept here so a reader of the parity suite can see
 the primitives it is built from without leaving this guide set.
 
+[`scaffold.md`](scaffold.md) is a byte-identical mirror of the guide for
+`@orkestrel/scaffold` — the devDependency that compiles this repo's shared file
+set and writes it into the tree. It documents **that package's** surface (the
+`scaffold` executable and the compiler behind it), not anything sourced in this
+repo; it is kept here so a reader can see what produced the shared files without
+leaving this guide set.
+
 ## See also
 
 - [`AGENTS.md`](../AGENTS.md) — the rules; §22 documentation-as-contracts.
