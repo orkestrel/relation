@@ -3,7 +3,8 @@ import type { Row } from '@orkestrel/database'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { isArray, isRecord, stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
-import { createRecorder, recordEmitterEvents } from '../../setup.js'
+import { createRecorder } from '@orkestrel/test'
+import { recordEmitterEvents } from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
 // `find` populating each relation kind (batched, no N+1), nested `includes`, the
