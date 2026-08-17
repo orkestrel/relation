@@ -8,6 +8,7 @@ import type {
 	RelationsShape,
 	ResolvedRelation,
 } from './types.js'
+import { RelationError } from './errors.js'
 import { resolveRelationMap } from './helpers.js'
 import { Model } from './Model.js'
 
@@ -18,8 +19,8 @@ import { Model } from './Model.js'
  * @remarks
  * Holds the database both at its precise type (to type each model's own table)
  * and at the broad `DatabaseInterface` (to fetch related tables by runtime name
- * while loading). Relation targets are validated lazily — a relation to a missing
- * table fails when that relation is first loaded.
+ * while loading). Construction validates every target and junction against the
+ * database's declared tables, so invalid definitions fail before an operation runs.
  */
 export class RelationManager<T extends TableMap = TableMap> implements RelationManagerInterface<T> {
 	readonly #database: DatabaseInterface<T>
@@ -31,8 +32,31 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 		this.#database = options.database
 		this.#broad = options.database
 		this.#relations = options.relations ?? {}
+		const declared = new Set(Object.keys(this.#broad.export()))
 		for (const [name, map] of Object.entries(this.#relations)) {
-			if (map !== undefined) this.#resolved.set(name, resolveRelationMap(map))
+			if (map === undefined) continue
+			const resolved = resolveRelationMap(map)
+			for (const [relation, entry] of resolved) {
+				if (!declared.has(entry.model)) {
+					throw new RelationError(
+						'INVALID',
+						`Model '${name}' relation '${relation}' targets undeclared table '${entry.model}'`,
+						{ model: name, relation, table: entry.model },
+					)
+				}
+				if (
+					entry.relationship === 'through' &&
+					entry.through !== undefined &&
+					!declared.has(entry.through)
+				) {
+					throw new RelationError(
+						'INVALID',
+						`Model '${name}' relation '${relation}' uses undeclared junction '${entry.through}'`,
+						{ model: name, relation, table: entry.through },
+					)
+				}
+			}
+			this.#resolved.set(name, resolved)
 		}
 	}
 

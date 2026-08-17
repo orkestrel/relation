@@ -1,6 +1,7 @@
 import type {
 	DatabaseInterface,
 	Key,
+	OperationOptions,
 	OrderDirection,
 	Row,
 	RowOf,
@@ -156,8 +157,8 @@ export interface RelationContext {
 	readonly primary: string
 }
 
-/** Pagination and ordering for `find`. */
-export interface FindOptions {
+/** Pagination, ordering, and cancellation for `find`. */
+export interface FindOptions extends OperationOptions {
 	readonly limit?: number
 	readonly offset?: number
 	readonly sort?: string
@@ -213,18 +214,25 @@ export type ModelEventMap<TKey extends Key = Key> = {
  * Exposes a typed {@link emitter} (AGENTS §13) carrying the eager-load + junction
  * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
+ * `link` is idempotent for sequential calls: an existing pair writes nothing and
+ * emits nothing. `unlink` removes matching junction rows inside one database
+ * transaction, so a fault rolls the removal back.
  */
 export interface ModelInterface<T = Row> {
 	readonly emitter: EmitterInterface<ModelEventMap>
 	readonly name: string
 	readonly table: TableInterface<T>
 	readonly relations: RelationMap
-	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<ReadonlyArray<Loaded<T> | undefined>>
+	load(key: Key, include: Include, options?: OperationOptions): Promise<Loaded<T> | undefined>
+	load(
+		keys: readonly Key[],
+		include: Include,
+		options?: OperationOptions,
+	): Promise<ReadonlyArray<Loaded<T> | undefined>>
 	find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>>
-	link(key: Key, relation: string, target: Key): Promise<void>
-	unlink(key: Key, relation: string, target: Key): Promise<void>
-	links(key: Key, relation: string): Promise<readonly Key[]>
+	link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
+	unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
+	links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]>
 }
 
 // === Manager

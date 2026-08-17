@@ -1,4 +1,10 @@
-import type { DatabaseInterface, Key, Row, TableInterface } from '@orkestrel/database'
+import type {
+	DatabaseInterface,
+	Key,
+	OperationOptions,
+	Row,
+	TableInterface,
+} from '@orkestrel/database'
 import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
 import type {
 	FindOptions,
@@ -11,7 +17,7 @@ import type {
 	RelationProps,
 	ResolvedRelation,
 } from './types.js'
-import { extractKey } from '@orkestrel/database'
+import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
 import { isArray, isDefined } from '@orkestrel/contract'
 import { RelationError } from './errors.js'
@@ -88,17 +94,29 @@ export class Model<T = Row> implements ModelInterface<T> {
 		return this.#relations
 	}
 
-	load(key: Key, include: Include): Promise<Loaded<T> | undefined>
-	load(keys: readonly Key[], include: Include): Promise<ReadonlyArray<Loaded<T> | undefined>>
+	load(key: Key, include: Include, options?: OperationOptions): Promise<Loaded<T> | undefined>
+	load(
+		keys: readonly Key[],
+		include: Include,
+		options?: OperationOptions,
+	): Promise<ReadonlyArray<Loaded<T> | undefined>>
 	async load(
 		keys: Key | readonly Key[],
 		include: Include,
+		options?: OperationOptions,
 	): Promise<(Loaded<T> | undefined) | ReadonlyArray<Loaded<T> | undefined>> {
+		checkAbort(options?.signal)
 		if (isArray(keys)) {
 			// Batch: one `get`, then one populate over all present rows (no N+1).
 			const bases = await this.#table.get(keys)
 			const present = bases.filter(isDefined)
-			const props = await this.#populate(present, include, this.#resolved, this.#table.primary)
+			const props = await this.#populate(
+				present,
+				include,
+				this.#resolved,
+				this.#table.primary,
+				options,
+			)
 			let next = 0
 			return bases.map((base) =>
 				base === undefined ? undefined : Object.assign({}, base, props[next++]),
@@ -106,74 +124,118 @@ export class Model<T = Row> implements ModelInterface<T> {
 		}
 		const base = await this.#table.get(keys)
 		if (base === undefined) return undefined
-		const [props] = await this.#populate([base], include, this.#resolved, this.#table.primary)
+		const [props] = await this.#populate(
+			[base],
+			include,
+			this.#resolved,
+			this.#table.primary,
+			options,
+		)
 		return Object.assign({}, base, props)
 	}
 
 	async find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>> {
-		const query = this.#table.query()
-		if (options?.sort !== undefined) {
-			query.order({
-				column: options.sort,
-				direction: options.direction ?? 'ascending',
-			})
-		}
-		if (options?.offset !== undefined) query.offset(options.offset)
-		if (options?.limit !== undefined) query.limit(options.limit)
-		const records = await query.collect()
-		const props = await this.#populate(records, include, this.#resolved, this.#table.primary)
+		checkAbort(options?.signal)
+		const records = await this.#table.records(
+			{
+				...(options?.sort !== undefined
+					? {
+							order: [
+								{
+									column: options.sort,
+									direction: options.direction ?? 'ascending',
+								},
+							],
+						}
+					: {}),
+				...(options?.offset !== undefined ? { offset: options.offset } : {}),
+				...(options?.limit !== undefined ? { limit: options.limit } : {}),
+			},
+			options,
+		)
+		const props = await this.#populate(
+			records,
+			include,
+			this.#resolved,
+			this.#table.primary,
+			options,
+		)
 		return records.map((record, index) => Object.assign({}, record, props[index]))
 	}
 
-	async link(key: Key, relation: string, target: Key): Promise<void> {
+	async link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		await this.#database.table(resolved.through ?? '').set({
-			[resolved.source ?? '']: key,
-			[resolved.target ?? '']: target,
-		})
+		const source = resolved.source ?? ''
+		const column = resolved.target ?? ''
+		const junction = this.#database.table(resolved.through ?? '')
+		const existing = await junction.count(
+			{
+				conditions: [
+					{ column: source, operator: 'equals', values: [key], connector: 'and' },
+					{ column, operator: 'equals', values: [target], connector: 'and' },
+				],
+			},
+			options,
+		)
+		if (existing > 0) return
+		await junction.set({ [source]: key, [column]: target }, options)
 		// Observe the inserted junction row — AFTER the driver write, so a swallowed listener
 		// throw can't perturb the link (carries the owning key + the relation name).
 		this.#emitter.emit('link', key, relation)
 	}
 
-	async unlink(key: Key, relation: string, target: Key): Promise<void> {
+	async unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
 		const junction = this.#database.table(resolved.through ?? '')
-		const rows = await junction
-			.query()
-			.condition({
-				column: resolved.source ?? '',
-				operator: 'equals',
-				values: [key],
-				connector: 'and',
-			})
-			.condition({
-				column: resolved.target ?? '',
-				operator: 'equals',
-				values: [target],
-				connector: 'and',
-			})
-			.collect()
-		for (const row of rows) {
-			const id = extractKey(row, junction.primary)
-			if (id !== undefined) await junction.remove(id)
-		}
-		// Observe the removed junction — AFTER every matching row was deleted.
+		const rows = await junction.records(
+			{
+				conditions: [
+					{
+						column: resolved.source ?? '',
+						operator: 'equals',
+						values: [key],
+						connector: 'and',
+					},
+					{
+						column: resolved.target ?? '',
+						operator: 'equals',
+						values: [target],
+						connector: 'and',
+					},
+				],
+			},
+			options,
+		)
+		await this.#database.transaction(async (transaction) => {
+			const scoped = transaction.table(resolved.through ?? '')
+			for (const row of rows) {
+				const id = extractKey(row, junction.primary)
+				if (id !== undefined) await scoped.remove(id, options)
+			}
+		}, options)
+		// Observe the removal only after the transaction commits.
 		this.#emitter.emit('unlink', key, relation)
 	}
 
-	async links(key: Key, relation: string): Promise<readonly Key[]> {
+	async links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]> {
+		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
 		const junction = this.#database.table(resolved.through ?? '')
-		const rows = await junction
-			.query()
-			.condition({
-				column: resolved.source ?? '',
-				operator: 'equals',
-				values: [key],
-				connector: 'and',
-			})
-			.collect()
+		const rows = await junction.records(
+			{
+				conditions: [
+					{
+						column: resolved.source ?? '',
+						operator: 'equals',
+						values: [key],
+						connector: 'and',
+					},
+				],
+			},
+			options,
+		)
 		const target = resolved.target ?? ''
 		const keys: Key[] = []
 		for (const row of rows) {
@@ -217,13 +279,16 @@ export class Model<T = Row> implements ModelInterface<T> {
 		include: Include,
 		resolvedMap: ReadonlyMap<string, ResolvedRelation>,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<RelationProps[]> {
+		checkAbort(options?.signal)
 		const props: RelationProps[] = records.map(() => ({}))
 		for (const [name, sub] of Object.entries(include)) {
 			if (sub === false) continue
+			checkAbort(options?.signal)
 			const resolved = resolvedMap.get(name)
 			if (resolved === undefined) continue
-			const values = await this.#load(records, resolved, sub, primary)
+			const values = await this.#load(records, resolved, sub, primary, options)
 			values.forEach((value, index) => {
 				const target = props[index]
 				if (target !== undefined) target[resolved.name] = value
@@ -254,18 +319,19 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<Array<Row | readonly Row[] | undefined>> {
 		switch (resolved.relationship) {
 			case 'belongs':
-				return this.#loadBelongs(records, resolved, sub)
+				return this.#loadBelongs(records, resolved, sub, options)
 			case 'many':
-				return this.#loadMany(records, resolved, sub, primary)
+				return this.#loadMany(records, resolved, sub, primary, options)
 			case 'one':
-				return this.#loadOne(records, resolved, sub, primary)
+				return this.#loadOne(records, resolved, sub, primary, options)
 			case 'through':
-				return this.#loadThrough(records, resolved, sub, primary)
+				return this.#loadThrough(records, resolved, sub, primary, options)
 			case 'morph':
-				return this.#loadMorph(records, resolved, sub, primary)
+				return this.#loadMorph(records, resolved, sub, primary, options)
 		}
 	}
 
@@ -273,6 +339,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		records: readonly unknown[],
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
+		options?: OperationOptions,
 	): Promise<Array<Row | undefined>> {
 		const column = resolved.column ?? ''
 		const keys = [
@@ -280,16 +347,20 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (keys.length === 0) return records.map(() => undefined)
 		const related = this.#database.table(resolved.model)
-		const rows = await related
-			.query()
-			.condition({
-				column: related.primary,
-				operator: 'any',
-				values: keys,
-				connector: 'and',
-			})
-			.collect()
-		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
+		const rows = await related.records(
+			{
+				conditions: [
+					{
+						column: related.primary,
+						operator: 'any',
+						values: keys,
+						connector: 'and',
+					},
+				],
+			},
+			options,
+		)
+		const index = this.#index(await this.#nest(resolved.model, rows, sub, options), related.primary)
 		return records.map((record) => {
 			const fk = this.#field(record, column)
 			return isDefined(fk) ? index.get(String(fk)) : undefined
@@ -301,18 +372,20 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
 			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
-		const rows = await this.#database
-			.table(resolved.model)
-			.query()
-			.condition({ column: foreign, operator: 'any', values: keys, connector: 'and' })
-			.collect()
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
+		const rows = await this.#database.table(resolved.model).records(
+			{
+				conditions: [{ column: foreign, operator: 'any', values: keys, connector: 'and' }],
+			},
+			options,
+		)
+		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}
 
@@ -321,8 +394,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<Array<Row | undefined>> {
-		const groups = await this.#loadMany(records, resolved, sub, primary)
+		const groups = await this.#loadMany(records, resolved, sub, primary, options)
 		return groups.map((group) => (group.length > 0 ? group[0] : undefined))
 	}
 
@@ -331,6 +405,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
 		const source = resolved.source ?? ''
 		const target = resolved.target ?? ''
@@ -339,11 +414,12 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (parents.length === 0) return records.map(() => [])
 
-		const junctions = await this.#database
-			.table(resolved.through ?? '')
-			.query()
-			.condition({ column: source, operator: 'any', values: parents, connector: 'and' })
-			.collect()
+		const junctions = await this.#database.table(resolved.through ?? '').records(
+			{
+				conditions: [{ column: source, operator: 'any', values: parents, connector: 'and' }],
+			},
+			options,
+		)
 		const targetsBySource = new Map<string, unknown[]>()
 		for (const junction of junctions) {
 			const value = this.#field(junction, target)
@@ -357,16 +433,20 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const targets = [...new Set([...targetsBySource.values()].flat())]
 		if (targets.length === 0) return records.map(() => [])
 		const related = this.#database.table(resolved.model)
-		const rows = await related
-			.query()
-			.condition({
-				column: related.primary,
-				operator: 'any',
-				values: targets,
-				connector: 'and',
-			})
-			.collect()
-		const index = this.#index(await this.#nest(resolved.model, rows, sub), related.primary)
+		const rows = await related.records(
+			{
+				conditions: [
+					{
+						column: related.primary,
+						operator: 'any',
+						values: targets,
+						connector: 'and',
+					},
+				],
+			},
+			options,
+		)
+		const index = this.#index(await this.#nest(resolved.model, rows, sub, options), related.primary)
 
 		return records.map((record) => {
 			const out: Row[] = []
@@ -383,24 +463,28 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ResolvedRelation,
 		sub: boolean | Include,
 		primary: string,
+		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
 			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
-		const rows = await this.#database
-			.table(resolved.model)
-			.query()
-			.condition({ column: foreign, operator: 'any', values: keys, connector: 'and' })
-			.condition({
-				column: resolved.tag ?? '',
-				operator: 'equals',
-				values: [resolved.label ?? ''],
-				connector: 'and',
-			})
-			.collect()
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub), foreign)
+		const rows = await this.#database.table(resolved.model).records(
+			{
+				conditions: [
+					{ column: foreign, operator: 'any', values: keys, connector: 'and' },
+					{
+						column: resolved.tag ?? '',
+						operator: 'equals',
+						values: [resolved.label ?? ''],
+						connector: 'and',
+					},
+				],
+			},
+			options,
+		)
+		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
 		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
 	}
 
@@ -409,11 +493,12 @@ export class Model<T = Row> implements ModelInterface<T> {
 		model: string,
 		rows: readonly Row[],
 		sub: boolean | Include,
+		options?: OperationOptions,
 	): Promise<readonly Row[]> {
 		if (typeof sub === 'boolean' || rows.length === 0) return rows
 		const context = this.#lookup(model)
 		if (context === undefined) return rows
-		const props = await this.#populate(rows, sub, context.resolved, context.primary)
+		const props = await this.#populate(rows, sub, context.resolved, context.primary, options)
 		return rows.map((row, index) => Object.assign({}, row, props[index]))
 	}
 

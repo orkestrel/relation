@@ -1,10 +1,10 @@
 import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
-import type { Row } from '@orkestrel/database'
-import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import type { DriverInterface, Row } from '@orkestrel/database'
+import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
 import { isArray, isRecord, stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
 import { createRecorder } from '@orkestrel/test'
-import { recordEmitterEvents } from '../../setup.js'
+import { FaultDriver, recordEmitterEvents } from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
 // `find` populating each relation kind (batched, no N+1), nested `includes`, the
@@ -21,9 +21,9 @@ function one(value: unknown): Row {
 	return isRecord(value) ? value : {}
 }
 
-async function setup() {
+async function setup(driver: DriverInterface = createMemoryDriver()) {
 	const db = createDatabase({
-		driver: createMemoryDriver(),
+		driver,
 		tables: {
 			accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
 			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
@@ -195,6 +195,44 @@ describe('Model — through management', () => {
 		await expect(accounts.links('acc1', 'missing')).rejects.toMatchObject({
 			code: 'UNKNOWN_RELATION',
 		})
+	})
+
+	it('does not duplicate or re-emit an existing link', async () => {
+		const { db, accounts } = await setup()
+		const events = recordEmitterEvents(accounts.emitter, ['link'])
+		await accounts.link('acc1', 'reps', 'rep3')
+		await accounts.link('acc1', 'reps', 'rep3')
+		expect(await db.table('accountReps').count()).toBe(3)
+		expect(events.link.calls).toEqual([['acc1', 'reps']])
+	})
+
+	it('rolls back every matching removal when one delete fails', async () => {
+		const driver = new FaultDriver(createMemoryDriver(), 2)
+		const { db, accounts } = await setup(driver)
+		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
+		const events = recordEmitterEvents(accounts.emitter, ['unlink'])
+		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toThrow(
+			'FaultDriver delete failure',
+		)
+		expect(await db.table('accountReps').count()).toBe(3)
+		expect(events.unlink.count).toBe(0)
+	})
+})
+
+describe('Model — cancellation', () => {
+	it('stops a population walk after the signal aborts between relations', async () => {
+		const { accounts } = await setup()
+		const controller = new AbortController()
+		const events = recordEmitterEvents(accounts.emitter, ['load'])
+		accounts.emitter.on('load', () => controller.abort('stop after first relation'))
+		await expect(
+			accounts.load(
+				'acc1',
+				{ contacts: true, classification: true },
+				{ signal: controller.signal },
+			),
+		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
+		expect(events.load.count).toBe(1)
 	})
 })
 
