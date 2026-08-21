@@ -1,10 +1,11 @@
+import type { ModelEventMap } from '@src/core'
 import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
 import type { DriverInterface, Row } from '@orkestrel/database'
 import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
 import { isArray, isRecord, stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
-import { createRecorder } from '@orkestrel/test'
-import { FaultDriver, recordEmitterEvents } from '../../setup.js'
+import { createRecorder, createRecorders } from '@orkestrel/test'
+import { FaultDriver } from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
 // `find` populating each relation kind (batched, no N+1), nested `includes`, the
@@ -199,7 +200,7 @@ describe('Model — through management', () => {
 
 	it('does not duplicate or re-emit an existing link', async () => {
 		const { db, accounts } = await setup()
-		const events = recordEmitterEvents(accounts.emitter, ['link'])
+		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
 		await accounts.link('acc1', 'reps', 'rep3')
 		await accounts.link('acc1', 'reps', 'rep3')
 		expect(await db.table('accountReps').count()).toBe(3)
@@ -210,7 +211,7 @@ describe('Model — through management', () => {
 		const driver = new FaultDriver(createMemoryDriver(), 2)
 		const { db, accounts } = await setup(driver)
 		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
-		const events = recordEmitterEvents(accounts.emitter, ['unlink'])
+		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
 		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toThrow(
 			'FaultDriver delete failure',
 		)
@@ -223,7 +224,7 @@ describe('Model — cancellation', () => {
 	it('stops a population walk after the signal aborts between relations', async () => {
 		const { accounts } = await setup()
 		const controller = new AbortController()
-		const events = recordEmitterEvents(accounts.emitter, ['load'])
+		const events = createRecorders<ModelEventMap, 'load'>(accounts.emitter, ['load'])
 		accounts.emitter.on('load', () => controller.abort('stop after first relation'))
 		await expect(
 			accounts.load(
@@ -249,15 +250,20 @@ describe('Model — cancellation', () => {
 // the events) with the attached count; `link` / `unlink` carry the owning key + relation; and
 // the emit-safety guarantee — a throwing observer cannot corrupt the load result.
 
-// The ModelEventMap event names recorded across the emitter tests — fed to the shared
-// `recordEmitterEvents` (AGENTS §16.1: the per-event wiring is centralized; this file
-// keeps only the names its scenarios observe).
+// The ModelEventMap event names recorded across the emitter tests — fed to `createRecorders`
+// from `@orkestrel/test` (AGENTS §16.1: the per-event wiring is centralized; this file keeps
+// only the names its scenarios observe).
 const MODEL_EVENTS: readonly ['load', 'link', 'unlink'] = ['load', 'link', 'unlink']
+
+// `createRecorders` takes `TName` explicitly: `TMap` appears only inside the generic `on` of
+// `EventSourceInterface`, so an emitter argument yields no inference candidate. Deriving the
+// union from the array keeps `TName` exactly as wide as the recorded names.
+type ModelEvent = (typeof MODEL_EVENTS)[number]
 
 describe('Model — emitter (push observation surface)', () => {
 	it('fires load once per relation with the count of rows attached across the record set', async () => {
 		const { accounts } = await setup()
-		const events = recordEmitterEvents(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
 		await accounts.load('acc1', { contacts: true, classification: true })
 		// One `load` per relation (NOT per record): acc1 has 2 contacts, 1 classification.
 		expect([...events.load.calls].sort()).toEqual([
@@ -268,7 +274,7 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('counts the total attached across a batch / find (one event per relation, not per record)', async () => {
 		const { accounts } = await setup()
-		const events = recordEmitterEvents(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
 		// find loads both accounts; acc1 has 2 contacts, acc2 has 0 → 2 attached, ONE `load`.
 		await accounts.find({ contacts: true })
 		expect(events.load.calls).toEqual([['contacts', 2]])
@@ -276,7 +282,7 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('a nested include fires load for the nested relation too', async () => {
 		const { accounts } = await setup()
-		const events = recordEmitterEvents(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
 		await accounts.load('acc1', { contacts: { account: true } })
 		// `contacts` (2 attached) at the top; nested `account` resolves for the 2 contacts → 2.
 		expect([...events.load.calls].sort()).toEqual([
@@ -287,7 +293,7 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('fires link then unlink carrying the owning key + relation', async () => {
 		const { accounts } = await setup()
-		const events = recordEmitterEvents(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
 		await accounts.link('acc1', 'reps', 'rep3')
 		await accounts.unlink('acc1', 'reps', 'rep1')
 		expect(events.link.calls).toEqual([['acc1', 'reps']])
