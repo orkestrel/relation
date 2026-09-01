@@ -70,7 +70,7 @@
 		"test:setup": "vitest run --config vite.config.ts --no-cache --reporter=dot --project setup"
 	},
 	"dependencies": {
-		"@orkestrel/contract": "^0.0.13",
+		"@orkestrel/contract": "^0.0.15",
 		"@orkestrel/database": "^0.0.12",
 		"@orkestrel/emitter": "^0.0.8"
 	},
