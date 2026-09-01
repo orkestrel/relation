@@ -1,10 +1,11 @@
 import {
 	belongsTo,
+	countAttached,
 	hasMany,
 	hasMorph,
 	hasOne,
 	hasThrough,
-	isRelationDescriptor,
+	readColumn,
 	RelationError,
 	resolveRelation,
 	resolveRelationMap,
@@ -95,14 +96,6 @@ describe('resolveRelation — raw descriptor inference', () => {
 	})
 })
 
-describe('isRelationDescriptor', () => {
-	it('accepts records, rejects strings and arrays', () => {
-		expect(isRelationDescriptor({ column: 'x' })).toBe(true)
-		expect(isRelationDescriptor('x')).toBe(false)
-		expect(isRelationDescriptor(['x'])).toBe(false)
-	})
-})
-
 describe('resolveRelationMap', () => {
 	it('resolves every entry by name', () => {
 		const map = resolveRelationMap({
@@ -112,5 +105,29 @@ describe('resolveRelationMap', () => {
 		expect([...map.keys()].sort()).toEqual(['classification', 'contacts'])
 		expect(map.get('contacts')?.relationship).toBe('many')
 		expect(map.get('classification')?.model).toBe('classifications')
+	})
+})
+
+describe('readColumn', () => {
+	it('projects a column off a record', () => {
+		expect(readColumn({ accountId: 'acc1' }, 'accountId')).toBe('acc1')
+	})
+
+	it('reads a missing column and a non-object as undefined', () => {
+		expect(readColumn({ accountId: 'acc1' }, 'missing')).toBeUndefined()
+		expect(readColumn(null, 'accountId')).toBeUndefined()
+		expect(readColumn('acc1', 'accountId')).toBeUndefined()
+		expect(readColumn(undefined, 'accountId')).toBeUndefined()
+	})
+})
+
+describe('countAttached', () => {
+	it('sums array lengths and counts each present single row', () => {
+		expect(countAttached([[{ id: 'p1' }, { id: 'p2' }], undefined, { id: 'p3' }])).toBe(3)
+	})
+
+	it('counts an empty set and empty arrays as zero', () => {
+		expect(countAttached([])).toBe(0)
+		expect(countAttached([[], [], undefined])).toBe(0)
 	})
 })

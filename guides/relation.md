@@ -58,6 +58,13 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 | `resolveRelationMap`   | function | Resolve every entry of a `RelationMap`.                    |
 | `isRelationDescriptor` | function | Narrow a value to the object form of a relation.           |
 
+### Row helpers
+
+| API             | Kind     | Summary                                                           |
+| --------------- | -------- | ----------------------------------------------------------------- |
+| `readColumn`    | function | Read one column off any record, whatever its declared type.       |
+| `countAttached` | function | Count the related rows one relation attached across a record set. |
+
 ### Errors
 
 | API               | Kind     | Summary                                                                         |
@@ -104,7 +111,7 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `RelationManagerInterface`
 
-Follows the manager accessor pattern (`model` singular, `models` plural).
+`model(name)` vends the typed model for a declared table; `models()` lists the table names that carry resolved relations, and `has(name)` reports whether a given table does.
 
 | Method   | Returns                       | Behavior                                 |
 | -------- | ----------------------------- | ---------------------------------------- |

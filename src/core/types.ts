@@ -257,7 +257,7 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
  * @remarks
  * Built from a database and a {@link RelationsShape}; relations are resolved once
  * at construction. `model(name)` returns the model for a declared table, typed by
- * that table's row. Follows the manager accessor pattern (`model` / `models`).
+ * that table's row.
  */
 export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number

@@ -5,24 +5,14 @@ import type {
 	Relationship,
 	ResolvedRelation,
 } from './types.js'
-import { isArray, isDefined, isRecord, isString } from '@orkestrel/contract'
+import type { Row } from '@orkestrel/database'
+import { isArray, isDefined, isString } from '@orkestrel/contract'
+import { isRelationDescriptor } from './validators.js'
 import { RelationError } from './errors.js'
 
 // Resolve raw relation values into the flat `ResolvedRelation` form once, at
 // define-time, so no inference runs during loading. The builders below set an
 // explicit `relationship`; hand-written descriptors fall back to field inference.
-
-// === Descriptor guard
-
-/**
- * Narrow a value to a {@link RelationDescriptor} (the object form of a relation).
- *
- * @param value - The value to test
- * @returns `true` when `value` is a plain record
- */
-export function isRelationDescriptor(value: unknown): value is RelationDescriptor {
-	return isRecord(value)
-}
 
 // === Resolution
 
@@ -156,6 +146,54 @@ export function resolveRelationMap(relations: RelationMap): ReadonlyMap<string, 
 		resolved.set(name, resolveRelation(name, value))
 	}
 	return resolved
+}
+
+// === Row projection
+
+/**
+ * Reads one column off any record.
+ *
+ * @remarks
+ * A base row's type is closed, so the column is read with `Reflect.get` rather than
+ * index access. Anything that is not an object reads as `undefined`.
+ *
+ * @param record - The record to read
+ * @param column - The column name
+ * @returns The column's value, or `undefined` when `record` is not an object
+ *
+ * @example
+ * ```ts
+ * readColumn({ accountId: 'acc1' }, 'accountId') // 'acc1'
+ * ```
+ */
+export function readColumn(record: unknown, column: string): unknown {
+	if (typeof record !== 'object' || record === null) return undefined
+	return Reflect.get(record, column)
+}
+
+/**
+ * Counts the related rows one relation attached across a record set.
+ *
+ * @remarks
+ * An array-valued relation (`many` / `through` / `morph`) sums its lengths; a
+ * single-valued one (`belongs` / `one`) counts each present row. This is the count a
+ * `Model` carries on its `load` event.
+ *
+ * @param values - One relation's loaded value per record
+ * @returns The total related rows attached across the set
+ *
+ * @example
+ * ```ts
+ * countAttached([[{ id: 'p1' }, { id: 'p2' }], undefined, { id: 'p3' }]) // 3
+ * ```
+ */
+export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undefined>): number {
+	let total = 0
+	for (const value of values) {
+		if (isArray(value)) total += value.length
+		else if (value !== undefined) total += 1
+	}
+	return total
 }
 
 // === Builders

@@ -20,6 +20,7 @@ import type {
 import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
 import { isArray, isDefined } from '@orkestrel/contract'
+import { countAttached, readColumn } from './helpers.js'
 import { RelationError } from './errors.js'
 
 /**
@@ -247,12 +248,6 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	// === Private
 
-	// Read a column off any record (the base row's type is closed — no index access).
-	#field(record: unknown, column: string): unknown {
-		if (typeof record !== 'object' || record === null) return undefined
-		return Reflect.get(record, column)
-	}
-
 	// Resolve a `through` relation by name, or throw a descriptive error.
 	#through(relation: string): ResolvedRelation {
 		const resolved = this.#resolved.get(relation)
@@ -296,21 +291,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 			// Observe this relation's eager-load — AFTER it resolved + was attached, ONCE per
 			// relation (not per record — the batched load has no N+1, nor do its events),
 			// carrying the relation name + the total related rows attached across the set.
-			this.#emitter.emit('load', resolved.name, this.#attached(values))
+			this.#emitter.emit('load', resolved.name, countAttached(values))
 		}
 		return props
-	}
-
-	// The total related rows a relation's values attached across the record set — an
-	// array-valued relation (`many` / `through` / `morph`) sums its lengths, a single-
-	// valued one (`belongs` / `one`) counts each present row. The `load` event's `count`.
-	#attached(values: ReadonlyArray<Row | readonly Row[] | undefined>): number {
-		let total = 0
-		for (const value of values) {
-			if (isArray(value)) total += value.length
-			else if (value !== undefined) total += 1
-		}
-		return total
 	}
 
 	// Dispatch one relation to its loader, returning a value per record.
@@ -342,9 +325,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		options?: OperationOptions,
 	): Promise<Array<Row | undefined>> {
 		const column = resolved.column ?? ''
-		const keys = [
-			...new Set(records.map((record) => this.#field(record, column)).filter(isDefined)),
-		]
+		const keys = [...new Set(records.map((record) => readColumn(record, column)).filter(isDefined))]
 		if (keys.length === 0) return records.map(() => undefined)
 		const related = this.#database.table(resolved.model)
 		const rows = await related.records(
@@ -362,7 +343,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		)
 		const index = this.#index(await this.#nest(resolved.model, rows, sub, options), related.primary)
 		return records.map((record) => {
-			const fk = this.#field(record, column)
+			const fk = readColumn(record, column)
 			return isDefined(fk) ? index.get(String(fk)) : undefined
 		})
 	}
@@ -376,7 +357,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
-			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
+			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
 		const rows = await this.#database.table(resolved.model).records(
@@ -386,7 +367,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			options,
 		)
 		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
-		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
+		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 
 	async #loadOne(
@@ -410,7 +391,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const source = resolved.source ?? ''
 		const target = resolved.target ?? ''
 		const parents = [
-			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
+			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (parents.length === 0) return records.map(() => [])
 
@@ -422,9 +403,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 		)
 		const targetsBySource = new Map<string, unknown[]>()
 		for (const junction of junctions) {
-			const value = this.#field(junction, target)
+			const value = readColumn(junction, target)
 			if (!isDefined(value)) continue
-			const owner = String(this.#field(junction, source))
+			const owner = String(readColumn(junction, source))
 			const list = targetsBySource.get(owner)
 			if (list !== undefined) list.push(value)
 			else targetsBySource.set(owner, [value])
@@ -450,7 +431,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 		return records.map((record) => {
 			const out: Row[] = []
-			for (const value of targetsBySource.get(String(this.#field(record, primary))) ?? []) {
+			for (const value of targetsBySource.get(String(readColumn(record, primary))) ?? []) {
 				const row = index.get(String(value))
 				if (row !== undefined) out.push(row)
 			}
@@ -467,7 +448,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	): Promise<Array<readonly Row[]>> {
 		const foreign = resolved.key ?? ''
 		const keys = [
-			...new Set(records.map((record) => this.#field(record, primary)).filter(isDefined)),
+			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
 		const rows = await this.#database.table(resolved.model).records(
@@ -485,7 +466,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			options,
 		)
 		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
-		return records.map((record) => groups.get(String(this.#field(record, primary))) ?? [])
+		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 
 	// Recursively load a nested include onto related rows (when `sub` is an Include).
@@ -505,7 +486,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	// Index rows by the string form of a column (for one-to-one key lookups).
 	#index(rows: readonly Row[], column: string): Map<string, Row> {
 		const map = new Map<string, Row>()
-		for (const row of rows) map.set(String(this.#field(row, column)), row)
+		for (const row of rows) map.set(String(readColumn(row, column)), row)
 		return map
 	}
 
@@ -513,7 +494,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	#group(rows: readonly Row[], column: string): Map<string, Row[]> {
 		const map = new Map<string, Row[]>()
 		for (const row of rows) {
-			const key = String(this.#field(row, column))
+			const key = String(readColumn(row, column))
 			const group = map.get(key)
 			if (group !== undefined) group.push(row)
 			else map.set(key, [row])
