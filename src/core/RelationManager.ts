@@ -13,8 +13,8 @@ import { resolveRelationMap } from './helpers.js'
 import { Model } from './Model.js'
 
 /**
- * The relation registry — resolves a {@link RelationsShape} once at construction
- * and vends a typed {@link ModelInterface} per declared table.
+ * Resolves a {@link RelationsShape} once at construction and vends a typed
+ * {@link ModelInterface} per declared table.
  *
  * @remarks
  * Holds the database both at its precise type (to type each model's own table)

@@ -137,7 +137,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 }
 
 /**
- * Resolve every entry of a {@link RelationMap} into a name → {@link ResolvedRelation} map.
+ * Resolves every entry of a {@link RelationMap} into a name → {@link ResolvedRelation} map.
  *
  * @param relations - The raw relation map
  * @returns A map keyed by relation name
@@ -201,7 +201,7 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
 // === Builders
 
 /**
- * Build a `belongs` relation — a foreign key on THIS table points at the related row.
+ * Builds a `belongs` relation — a foreign key on THIS table points at the related row.
  *
  * @param column - The FK column on this table
  * @param model - Target table name (defaults to the relation name)
@@ -217,7 +217,7 @@ export function belongsTo(column: string, model?: string): RelationDescriptor {
 }
 
 /**
- * Build a `many` relation — a foreign key on the RELATED table points back here.
+ * Builds a `many` relation — a foreign key on the RELATED table points back here.
  *
  * @param key - The FK column on the related table
  * @param model - Target table name (defaults to the relation name)
@@ -228,7 +228,7 @@ export function hasMany(key: string, model?: string): RelationDescriptor {
 }
 
 /**
- * Build a `one` relation — like {@link hasMany}, but a single related row.
+ * Builds a `one` relation — like {@link hasMany}, but a single related row.
  *
  * @param key - The FK column on the related table
  * @param model - Target table name (defaults to the relation name)
@@ -239,7 +239,7 @@ export function hasOne(key: string, model?: string): RelationDescriptor {
 }
 
 /**
- * Build a `through` relation — a junction table links the two sides (many-to-many).
+ * Builds a `through` relation — a junction table links the two sides (many-to-many).
  *
  * @param through - The junction table name
  * @param source - The junction FK column pointing at THIS model
@@ -268,7 +268,7 @@ export function hasThrough(
 }
 
 /**
- * Build a `morph` relation — a polymorphic FK plus a discriminator on the RELATED table.
+ * Builds a `morph` relation — a polymorphic FK plus a discriminator on the RELATED table.
  *
  * @param key - The FK column on the related table
  * @param tag - The discriminator column on the related table

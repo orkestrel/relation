@@ -20,7 +20,7 @@ import type { EmitterInterface } from '@orkestrel/emitter'
 // === Relation kinds & descriptors
 
 /**
- * The five relation shapes.
+ * Enumerates the five relation shapes.
  *
  * @remarks
  * `belongs` — a foreign key on THIS table points at the related row (single).
@@ -32,7 +32,7 @@ import type { EmitterInterface } from '@orkestrel/emitter'
 export type Relationship = 'belongs' | 'many' | 'one' | 'through' | 'morph'
 
 /**
- * The object form of a relation.
+ * Represents the object form of a relation.
  *
  * @remarks
  * The builder helpers (`belongsTo` / `hasMany` / `hasOne` / `hasThrough` /
@@ -56,7 +56,7 @@ export interface RelationDescriptor {
 }
 
 /**
- * A single relation definition.
+ * Represents a single relation definition.
  *
  * @remarks
  * A `string` is a `belongs` (the FK column on this table); a `readonly string[]`
@@ -65,14 +65,14 @@ export interface RelationDescriptor {
  */
 export type Relation = string | readonly string[] | RelationDescriptor
 
-/** A model's relations, keyed by relation name. */
+/** Holds a model's relations, keyed by relation name. */
 export type RelationMap = Readonly<Record<string, Relation>>
 
-/** A machine-readable {@link RelationError} code. */
+/** Names a machine-readable {@link RelationError} code. */
 export type RelationErrorCode = 'INVALID' | 'UNKNOWN_RELATION' | 'NOT_THROUGH'
 
 /**
- * Per-table relation maps — the declarative input to `createRelationManager`.
+ * Holds per-table relation maps — the declarative input to `createRelationManager`.
  *
  * @remarks
  * Keys are constrained to the database's declared table names, so relations can
@@ -83,7 +83,7 @@ export type RelationsShape<T extends TableMap = TableMap> = {
 }
 
 /**
- * A `belongs` relation resolved at define-time — the foreign key sits on THIS table.
+ * Represents a `belongs` relation resolved at define-time — the foreign key sits on THIS table.
  *
  * @remarks
  * `column` is that foreign key; the related row is the one whose primary key it holds.
@@ -97,7 +97,8 @@ export interface ResolvedBelongs {
 }
 
 /**
- * A `many` relation resolved at define-time — the foreign key sits on the RELATED table.
+ * Represents a `many` relation resolved at define-time — the foreign key sits on the RELATED
+ * table.
  *
  * @remarks
  * `key` is that foreign key. Every related row holding this record's primary-key value
@@ -111,7 +112,8 @@ export interface ResolvedMany {
 }
 
 /**
- * A `one` relation resolved at define-time — {@link ResolvedMany}'s foreign key, one row.
+ * Represents a `one` relation resolved at define-time — {@link ResolvedMany}'s foreign key, one
+ * row.
  *
  * @remarks
  * `key` is the foreign key on the related table. The first matching row is attached and
@@ -125,7 +127,8 @@ export interface ResolvedOne {
 }
 
 /**
- * A `through` relation resolved at define-time — a junction table links the two sides.
+ * Represents a `through` relation resolved at define-time — a junction table links the two
+ * sides.
  *
  * @remarks
  * `through` is the junction table, `source` its foreign-key column pointing at THIS
@@ -142,7 +145,8 @@ export interface ResolvedThrough {
 }
 
 /**
- * A `morph` relation resolved at define-time — a polymorphic foreign key and its discriminator.
+ * Represents a `morph` relation resolved at define-time — a polymorphic foreign key and its
+ * discriminator.
  *
  * @remarks
  * `key` is the foreign key on the related table, `tag` the discriminator column beside
@@ -158,7 +162,7 @@ export interface ResolvedMorph {
 }
 
 /**
- * A relation resolved at define-time into a flat, ready-to-load form.
+ * Represents a relation resolved at define-time into a flat, ready-to-load form.
  *
  * @remarks
  * A union over the arms {@link Relationship} names, discriminated on `relationship`:
@@ -177,7 +181,7 @@ export type ResolvedRelation =
 // === Loading
 
 /**
- * Which relations to populate when loading — and, recursively, their own.
+ * Selects which relations to populate when loading — and, recursively, their own.
  *
  * @remarks
  * `true` loads the relation flat; a nested {@link Include} loads it and its
@@ -193,9 +197,9 @@ export interface Include {
 }
 
 /**
- * The relation properties attached to a {@link Loaded} row — each relation name
- * mapped to its loaded related row(s), or `undefined` when a `belongs` / `one`
- * relation misses.
+ * Holds the relation properties attached to a {@link Loaded} row — each relation
+ * name mapped to its loaded related row(s), or `undefined` when a `belongs` /
+ * `one` relation misses.
  *
  * @remarks
  * The broad value type (`Row | readonly Row[] | undefined`) is narrowed at the use
@@ -205,7 +209,7 @@ export interface Include {
 export type RelationProps = Record<string, Row | readonly Row[] | undefined>
 
 /**
- * A row with its loaded relation properties attached.
+ * Represents a row with its loaded relation properties attached.
  *
  * @remarks
  * The base row is fully typed (the table's row type); the relation properties
@@ -216,7 +220,7 @@ export type RelationProps = Record<string, Row | readonly Row[] | undefined>
 export type Loaded<T> = T & Readonly<RelationProps>
 
 /**
- * A related model's resolved relations and primary-key column, for nested loading.
+ * Holds a related model's resolved relations and primary-key column, for nested loading.
  *
  * @remarks
  * The lookup result the relation registry hands a {@link ModelInterface} so it can
@@ -229,21 +233,21 @@ export interface RelationContext {
 	readonly primary: string
 }
 
-/** Pagination, ordering, and cancellation for `find`. */
+/** Configures pagination, ordering, and cancellation for `find`. */
 export interface FindOptions extends OperationOptions {
 	readonly limit?: number
 	readonly offset?: number
 	readonly sort?: string
-	/** The sort direction; defaults to `ascending` when {@link sort} is present. */
+	/** Holds the sort direction; defaults to `ascending` when {@link sort} is present. */
 	readonly direction?: OrderDirection
 }
 
 // === Model
 
 /**
- * The push observation surface of a {@link ModelInterface} (AGENTS §13) — the eager-load
- * + junction-management moments a fire-and-forget observer (logging, metrics, a sync
- * layer) subscribes to.
+ * Declares the push observation surface of a {@link ModelInterface} (AGENTS §13) — the
+ * eager-load + junction-management moments a fire-and-forget observer (logging, metrics,
+ * a sync layer) subscribes to.
  *
  * @typeParam TKey - The model's primary-key type (a {@link Key}); `link` / `unlink` carry
  *   the owning key so the map is `ModelEventMap<TKey>`.
@@ -264,16 +268,25 @@ export interface FindOptions extends OperationOptions {
  * `EventMap` is a `type` kind).
  */
 export type ModelEventMap<TKey extends Key = Key> = {
-	/** A relation eager-loaded — the relation name + the count of related rows attached. */
+	/**
+	 * Fires when a relation is eager-loaded — the relation name + the count of related rows
+	 * attached.
+	 */
 	readonly load: readonly [name: string, count: number]
-	/** A junction row was inserted for a `through` relation — the owning key + relation name. */
+	/**
+	 * Fires after a junction row is inserted for a `through` relation — the owning key +
+	 * relation name.
+	 */
 	readonly link: readonly [key: TKey, relation: string]
-	/** A junction row was removed for a `through` relation — the owning key + relation name. */
+	/**
+	 * Fires after a junction row is removed for a `through` relation — the owning key +
+	 * relation name.
+	 */
 	readonly unlink: readonly [key: TKey, relation: string]
 }
 
 /**
- * A model — a typed table paired with relation-aware loading and junction
+ * Represents a typed table paired with relation-aware loading and junction
  * management.
  *
  * @remarks
@@ -309,10 +322,10 @@ export interface ModelInterface<T = Row> {
 
 // === Manager
 
-/** Options for `createRelationManager`. */
+/** Configures `createRelationManager`. */
 export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	/**
-	 * The database to build the registry over.
+	 * Holds the database to build the registry over.
 	 *
 	 * @remarks
 	 * Intersected with the broad `DatabaseInterface` so the manager gets both the
@@ -324,7 +337,7 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
 }
 
 /**
- * The relation registry — vends a typed {@link ModelInterface} per table.
+ * Vends a typed {@link ModelInterface} per table.
  *
  * @remarks
  * Built from a database and a {@link RelationsShape}; relations are resolved once

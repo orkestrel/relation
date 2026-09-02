@@ -4,7 +4,7 @@ import type { RelationErrorCode } from './types.js'
 // carrying a machine-readable `code`, so a `catch` branches on `error.code`.
 
 /**
- * An error thrown by the relations layer.
+ * Represents an error thrown by the relations layer.
  *
  * @remarks
  * Thrown for: a relation value whose relationship cannot be inferred (`INVALID`), a
@@ -30,10 +30,10 @@ export class RelationError extends Error {
 }
 
 /**
- * Narrow an unknown caught value to a {@link RelationError}.
+ * Narrows an unknown caught value to a {@link RelationError}.
  *
  * @param value - The value to test (typically a `catch` binding)
- * @returns `true` when `value` is a {@link RelationError}
+ * @returns True if `value` is a {@link RelationError}; false otherwise
  */
 export function isRelationError(value: unknown): value is RelationError {
 	return value instanceof RelationError

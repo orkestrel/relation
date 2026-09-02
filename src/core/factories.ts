@@ -3,7 +3,7 @@ import type { TableMap } from '@orkestrel/database'
 import { RelationManager } from './RelationManager.js'
 
 /**
- * Create a relation manager over a database and its relation definitions.
+ * Creates a relation manager over a database and its relation definitions.
  *
  * @remarks
  * `relations` maps table names (constrained to the database's tables) to their

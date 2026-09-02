@@ -29,7 +29,7 @@ import { countAttached, readColumn } from './helpers.js'
 import { RelationError } from './errors.js'
 
 /**
- * A model — a typed table paired with relation-aware loading.
+ * Pairs a typed table with relation-aware loading.
  *
  * @remarks
  * The model's own table is fully typed (`table`); related tables are reached by
