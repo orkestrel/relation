@@ -17,18 +17,20 @@ import { RelationError } from './errors.js'
 // === Resolution
 
 /**
- * Resolve one raw {@link Relation} value into a flat {@link ResolvedRelation}.
+ * Resolves one raw {@link Relation} value into a flat {@link ResolvedRelation}.
  *
  * @remarks
  * A `string` is a `belongs` (FK column on this table); a `readonly string[]` is a
  * `many` (FK column on the related table); a {@link RelationDescriptor} uses its
  * explicit `relationship`, or infers it from the fields present. The target model
- * defaults to the relation name. Throws `INVALID` when the relationship cannot be
- * resolved or a required field is missing.
+ * defaults to the relation name. Every column the resolved arm declares is validated
+ * here, which is what lets each arm declare its columns required.
  *
  * @param name - The relation name (its key in the {@link RelationMap})
  * @param value - The raw relation value
- * @returns The resolved relation
+ * @returns The resolved relation, on the arm its `relationship` names
+ * @throws An `INVALID` {@link RelationError} when the relationship cannot be resolved, or when a
+ *   column the resolved arm declares is missing
  */
 export function resolveRelation(name: string, value: Relation): ResolvedRelation {
 	if (isString(value)) {

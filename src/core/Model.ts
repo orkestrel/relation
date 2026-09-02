@@ -15,7 +15,12 @@ import type {
 	RelationContext,
 	RelationMap,
 	RelationProps,
+	ResolvedBelongs,
+	ResolvedMany,
+	ResolvedMorph,
+	ResolvedOne,
 	ResolvedRelation,
+	ResolvedThrough,
 } from './types.js'
 import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
@@ -167,20 +172,18 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const source = resolved.source ?? ''
-		const column = resolved.target ?? ''
-		const junction = this.#database.table(resolved.through ?? '')
+		const junction = this.#database.table(resolved.through)
 		const existing = await junction.count(
 			{
 				conditions: [
-					{ column: source, operator: 'equals', values: [key], connector: 'and' },
-					{ column, operator: 'equals', values: [target], connector: 'and' },
+					{ column: resolved.source, operator: 'equals', values: [key], connector: 'and' },
+					{ column: resolved.target, operator: 'equals', values: [target], connector: 'and' },
 				],
 			},
 			options,
 		)
 		if (existing > 0) return
-		await junction.set({ [source]: key, [column]: target }, options)
+		await junction.set({ [resolved.source]: key, [resolved.target]: target }, options)
 		// Observe the inserted junction row — AFTER the driver write, so a swallowed listener
 		// throw can't perturb the link (carries the owning key + the relation name).
 		this.#emitter.emit('link', key, relation)
@@ -189,18 +192,18 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const junction = this.#database.table(resolved.through ?? '')
+		const junction = this.#database.table(resolved.through)
 		const rows = await junction.records(
 			{
 				conditions: [
 					{
-						column: resolved.source ?? '',
+						column: resolved.source,
 						operator: 'equals',
 						values: [key],
 						connector: 'and',
 					},
 					{
-						column: resolved.target ?? '',
+						column: resolved.target,
 						operator: 'equals',
 						values: [target],
 						connector: 'and',
@@ -210,7 +213,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			options,
 		)
 		await this.#database.transaction(async (transaction) => {
-			const scoped = transaction.table(resolved.through ?? '')
+			const scoped = transaction.table(resolved.through)
 			for (const row of rows) {
 				const id = extractKey(row, junction.primary)
 				if (id !== undefined) await scoped.remove(id, options)
@@ -223,12 +226,12 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const junction = this.#database.table(resolved.through ?? '')
+		const junction = this.#database.table(resolved.through)
 		const rows = await junction.records(
 			{
 				conditions: [
 					{
-						column: resolved.source ?? '',
+						column: resolved.source,
 						operator: 'equals',
 						values: [key],
 						connector: 'and',
@@ -237,7 +240,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const target = resolved.target ?? ''
+		const target = resolved.target
 		const keys: Key[] = []
 		for (const row of rows) {
 			const value = extractKey(row, target)
@@ -248,8 +251,8 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	// === Private
 
-	// Resolve a `through` relation by name, or throw a descriptive error.
-	#through(relation: string): ResolvedRelation {
+	// Resolve a `through` relation by name to its own arm, or throw a descriptive error.
+	#through(relation: string): ResolvedThrough {
 		const resolved = this.#resolved.get(relation)
 		if (resolved === undefined) {
 			throw new RelationError(
@@ -320,11 +323,11 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	async #loadBelongs(
 		records: readonly unknown[],
-		resolved: ResolvedRelation,
+		resolved: ResolvedBelongs,
 		sub: boolean | Include,
 		options?: OperationOptions,
 	): Promise<Array<Row | undefined>> {
-		const column = resolved.column ?? ''
+		const column = resolved.column
 		const keys = [...new Set(records.map((record) => readColumn(record, column)).filter(isDefined))]
 		if (keys.length === 0) return records.map(() => undefined)
 		const related = this.#database.table(resolved.model)
@@ -350,12 +353,12 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	async #loadMany(
 		records: readonly unknown[],
-		resolved: ResolvedRelation,
+		resolved: ResolvedMany | ResolvedOne,
 		sub: boolean | Include,
 		primary: string,
 		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
-		const foreign = resolved.key ?? ''
+		const foreign = resolved.key
 		const keys = [
 			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
@@ -372,7 +375,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	async #loadOne(
 		records: readonly unknown[],
-		resolved: ResolvedRelation,
+		resolved: ResolvedOne,
 		sub: boolean | Include,
 		primary: string,
 		options?: OperationOptions,
@@ -383,19 +386,19 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	async #loadThrough(
 		records: readonly unknown[],
-		resolved: ResolvedRelation,
+		resolved: ResolvedThrough,
 		sub: boolean | Include,
 		primary: string,
 		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
-		const source = resolved.source ?? ''
-		const target = resolved.target ?? ''
+		const source = resolved.source
+		const target = resolved.target
 		const parents = [
 			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (parents.length === 0) return records.map(() => [])
 
-		const junctions = await this.#database.table(resolved.through ?? '').records(
+		const junctions = await this.#database.table(resolved.through).records(
 			{
 				conditions: [{ column: source, operator: 'any', values: parents, connector: 'and' }],
 			},
@@ -441,12 +444,12 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 	async #loadMorph(
 		records: readonly unknown[],
-		resolved: ResolvedRelation,
+		resolved: ResolvedMorph,
 		sub: boolean | Include,
 		primary: string,
 		options?: OperationOptions,
 	): Promise<Array<readonly Row[]>> {
-		const foreign = resolved.key ?? ''
+		const foreign = resolved.key
 		const keys = [
 			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
@@ -456,9 +459,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 				conditions: [
 					{ column: foreign, operator: 'any', values: keys, connector: 'and' },
 					{
-						column: resolved.tag ?? '',
+						column: resolved.tag,
 						operator: 'equals',
-						values: [resolved.label ?? ''],
+						values: [resolved.label],
 						connector: 'and',
 					},
 				],

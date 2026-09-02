@@ -83,24 +83,96 @@ export type RelationsShape<T extends TableMap = TableMap> = {
 }
 
 /**
+ * A `belongs` relation resolved at define-time — the foreign key sits on THIS table.
+ *
+ * @remarks
+ * `column` is that foreign key; the related row is the one whose primary key it holds.
+ * `name` is the relation's key in its {@link RelationMap} and `model` the target table.
+ */
+export interface ResolvedBelongs {
+	readonly relationship: 'belongs'
+	readonly name: string
+	readonly model: string
+	readonly column: string
+}
+
+/**
+ * A `many` relation resolved at define-time — the foreign key sits on the RELATED table.
+ *
+ * @remarks
+ * `key` is that foreign key. Every related row holding this record's primary-key value
+ * in it is attached, so the loaded property is an array.
+ */
+export interface ResolvedMany {
+	readonly relationship: 'many'
+	readonly name: string
+	readonly model: string
+	readonly key: string
+}
+
+/**
+ * A `one` relation resolved at define-time — {@link ResolvedMany}'s foreign key, one row.
+ *
+ * @remarks
+ * `key` is the foreign key on the related table. The first matching row is attached and
+ * a miss reads as `undefined`.
+ */
+export interface ResolvedOne {
+	readonly relationship: 'one'
+	readonly name: string
+	readonly model: string
+	readonly key: string
+}
+
+/**
+ * A `through` relation resolved at define-time — a junction table links the two sides.
+ *
+ * @remarks
+ * `through` is the junction table, `source` its foreign-key column pointing at THIS
+ * model, and `target` its foreign-key column pointing at the related model. These are
+ * the columns `link` / `unlink` / `links` write and read.
+ */
+export interface ResolvedThrough {
+	readonly relationship: 'through'
+	readonly name: string
+	readonly model: string
+	readonly through: string
+	readonly source: string
+	readonly target: string
+}
+
+/**
+ * A `morph` relation resolved at define-time — a polymorphic foreign key and its discriminator.
+ *
+ * @remarks
+ * `key` is the foreign key on the related table, `tag` the discriminator column beside
+ * it, and `label` the discriminator value identifying THIS model.
+ */
+export interface ResolvedMorph {
+	readonly relationship: 'morph'
+	readonly name: string
+	readonly model: string
+	readonly key: string
+	readonly tag: string
+	readonly label: string
+}
+
+/**
  * A relation resolved at define-time into a flat, ready-to-load form.
  *
  * @remarks
- * The relationship and every column needed to load, link, and unlink are
- * precomputed from the raw {@link Relation}, so no inference runs at query time.
+ * A union over the arms {@link Relationship} names, discriminated on `relationship`:
+ * each arm declares exactly the columns that arm needs to load, link, and unlink, and
+ * declares them required. `resolveRelation` precomputes and validates them from the raw
+ * {@link Relation}, so no inference and no absence check runs at query time. Narrow on
+ * `relationship` before reading an arm's own columns.
  */
-export interface ResolvedRelation {
-	readonly relationship: Relationship
-	readonly name: string
-	readonly model: string
-	readonly column?: string
-	readonly key?: string
-	readonly through?: string
-	readonly source?: string
-	readonly target?: string
-	readonly tag?: string
-	readonly label?: string
-}
+export type ResolvedRelation =
+	| ResolvedBelongs
+	| ResolvedMany
+	| ResolvedOne
+	| ResolvedThrough
+	| ResolvedMorph
 
 // === Loading
 
@@ -262,6 +334,6 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
 export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number
 	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>>
-	models(): readonly string[]
+	names(): readonly string[]
 	has(name: string): boolean
 }

@@ -44,11 +44,7 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 						{ model: name, relation, table: entry.model },
 					)
 				}
-				if (
-					entry.relationship === 'through' &&
-					entry.through !== undefined &&
-					!declared.has(entry.through)
-				) {
+				if (entry.relationship === 'through' && !declared.has(entry.through)) {
 					throw new RelationError(
 						'INVALID',
 						`Model '${name}' relation '${relation}' uses undeclared junction '${entry.through}'`,
@@ -70,7 +66,7 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 		return this.#vend(name, this.#database.table(name), resolved, relations)
 	}
 
-	models(): readonly string[] {
+	names(): readonly string[] {
 		return [...this.#resolved.keys()]
 	}
 

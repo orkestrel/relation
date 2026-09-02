@@ -3,7 +3,7 @@ import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
 
-// Manager-level behavior — the registry surface (`count` / `models` / `has`) and
+// Manager-level behavior — the registry surface (`count` / `names` / `has`) and
 // the typed `model(name)` accessor. Relation loading, nested includes, and
 // through management are `Model`'s own surface and live in Model.test.ts.
 
@@ -33,7 +33,7 @@ describe('RelationManager — registry', () => {
 	it('tracks the defined models', async () => {
 		const { manager } = await setup()
 		expect(manager.count).toBe(2)
-		expect([...manager.models()].sort()).toEqual(['accounts', 'contacts'])
+		expect([...manager.names()].sort()).toEqual(['accounts', 'contacts'])
 		expect(manager.has('accounts')).toBe(true)
 		expect(manager.has('missing')).toBe(false)
 	})
@@ -45,7 +45,7 @@ describe('RelationManager — registry', () => {
 		})
 		const manager = createRelationManager({ database: db })
 		expect(manager.count).toBe(0)
-		expect(manager.models()).toEqual([])
+		expect(manager.names()).toEqual([])
 	})
 })
 

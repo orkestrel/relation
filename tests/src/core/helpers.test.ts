@@ -74,6 +74,17 @@ describe('resolveRelation — builders', () => {
 			label: 'account',
 		})
 	})
+
+	it('defaults the target model to the relation name when a builder omits it', () => {
+		expect(resolveRelation('reps', hasThrough('accountReps', 'accountId', 'repId'))).toEqual({
+			relationship: 'through',
+			name: 'reps',
+			model: 'reps',
+			through: 'accountReps',
+			source: 'accountId',
+			target: 'repId',
+		})
+	})
 })
 
 describe('resolveRelation — raw descriptor inference', () => {

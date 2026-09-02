@@ -81,7 +81,12 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 | `Relation`                 | type      | `string` (belongs) \| `readonly string[]` (many) \| `RelationDescriptor`.                                         |
 | `RelationMap`              | type      | `Readonly<Record<string, Relation>>` — a model's relations by name.                                               |
 | `RelationsShape`           | type      | `{ [table]?: RelationMap }` — per-table relation maps, keyed by the database's tables.                            |
-| `ResolvedRelation`         | interface | A relation resolved at define-time into a flat, ready-to-load form.                                               |
+| `ResolvedRelation`         | type      | A relation resolved at define-time — a union over the arms that follow, discriminated on `relationship`.          |
+| `ResolvedBelongs`          | interface | The `belongs` arm — `{ relationship, name, model, column }`, every member required.                               |
+| `ResolvedMany`             | interface | The `many` arm — `{ relationship, name, model, key }`, every member required.                                     |
+| `ResolvedOne`              | interface | The `one` arm — `{ relationship, name, model, key }`, every member required.                                      |
+| `ResolvedThrough`          | interface | The `through` arm — `{ relationship, name, model, through, source, target }`, every member required.              |
+| `ResolvedMorph`            | interface | The `morph` arm — `{ relationship, name, model, key, tag, label }`, every member required.                        |
 | `RelationErrorCode`        | type      | `'INVALID' \| 'UNKNOWN_RELATION' \| 'NOT_THROUGH'`.                                                               |
 | `Include`                  | interface | Which relations to populate (`true`), and recursively their own (nested `Include`).                               |
 | `Loaded`                   | type      | `T & Record<string, Row \| readonly Row[] \| undefined>` — a row with relations attached.                         |
@@ -91,7 +96,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 | `ModelEventMap`            | type      | A model's push observation surface (§13) — `load(name, count)` · `link(key, relation)` · `unlink(key, relation)`. |
 | `ModelInterface`           | interface | `emitter` / `name` / `table` / `relations` + `load` / `find` / `link` / `unlink` / `links`.                       |
 | `RelationManagerOptions`   | interface | `{ database, relations? }` — input to `createRelationManager`.                                                    |
-| `RelationManagerInterface` | interface | `count` / `model` / `models` / `has`.                                                                             |
+| `RelationManagerInterface` | interface | `count` / `model` / `names` / `has`.                                                                              |
 
 ## Methods
 
@@ -111,13 +116,13 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 #### `RelationManagerInterface`
 
-`model(name)` vends the typed model for a declared table; `models()` lists the table names that carry resolved relations, and `has(name)` reports whether a given table does.
+`model(name)` vends the typed model for a declared table; `names()` lists the table names that carry resolved relations, and `has(name)` reports whether a given table does.
 
-| Method   | Returns                       | Behavior                                 |
-| -------- | ----------------------------- | ---------------------------------------- |
-| `model`  | `ModelInterface<RowOf<T[K]>>` | The typed model for a declared table.    |
-| `models` | `readonly string[]`           | The names of every model with relations. |
-| `has`    | `boolean`                     | Whether a model has resolved relations.  |
+| Method  | Returns                       | Behavior                                 |
+| ------- | ----------------------------- | ---------------------------------------- |
+| `model` | `ModelInterface<RowOf<T[K]>>` | The typed model for a declared table.    |
+| `names` | `readonly string[]`           | The names of every model with relations. |
+| `has`   | `boolean`                     | Whether a model has resolved relations.  |
 
 ## Contract
 
@@ -126,7 +131,7 @@ These invariants hold across `src/core` ↔ `relation.md`:
 1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` / `type` row in the `## Surface` tables is a real export of the relations source tree, and every export appears as a Surface row — exhaustive, both directions (AGENTS §22).
 2. **Layered on the typed database and validated at construction.** A manager is built over a `DatabaseInterface`; `model(name)` is checked against the database's declared tables and returns a model whose `table` is that table's typed `TableInterface` (a declared table with no relation entry yields a relation-less model — still fully usable for typed CRUD). Related tables are fetched by runtime name at the broad `Row` type. Every resolved target table and `through` junction must appear in `database.export()`; an undeclared table throws `RelationError('INVALID', ...)` when the manager is created, before any operation runs.
 3. **Batch loading — no N+1.** A direct included relation uses one query over the distinct foreign keys for the entire record set; a `through` relation uses two queries, one for the junction rows and one for the target rows. Related rows are grouped in memory and attached, so either query count is independent of how many parents were loaded. Nested includes recurse through the registry, and each nested level is batched again under the same rule.
-4. **Resolution is define-time.** Each raw `Relation` is resolved once at construction into a flat `ResolvedRelation`; nothing is inferred during loading. The builders set an explicit `relationship` (so `many` and `one`, otherwise identical as `{ key }`, are unambiguous); a hand-written descriptor with no `relationship` infers one from the fields present (`through` → `through`, `tag` → `morph`, `column` → `belongs`, else `key` → `one`), and a malformed one throws `INVALID` at define-time.
+4. **Resolution is define-time.** Each raw `Relation` is resolved once at construction into a flat `ResolvedRelation` — a union discriminated on `relationship` whose every arm declares its own columns required, so a loader reads them after one narrow and never against an absent member; nothing is inferred during loading. The builders set an explicit `relationship` (so `many` and `one`, otherwise identical as `{ key }`, are unambiguous); a hand-written descriptor with no `relationship` infers one from the fields present (`through` → `through`, `tag` → `morph`, `column` → `belongs`, else `key` → `one`), and a malformed one throws `INVALID` at define-time.
 5. **Total, loose `Loaded`.** `Loaded<T>` is the base row (the table's row type) intersected with the broad relation bag `Readonly<RelationProps>` (`Row | readonly Row[] | undefined` per relation); a missed `belongs` / `one` is `undefined`, a missed `many` / `through` / `morph` is `[]`. Through-only operations (`link` / `unlink` / `links`) throw `NOT_THROUGH` on any other kind and `UNKNOWN_RELATION` for a relation the model never declared. `link` is idempotent for sequential calls: an existing `(key, target)` pair causes no write and no event. Concurrent `link` calls for the same pair may each insert. `unlink` removes all matching rows inside one database transaction, so a fault rolls the whole removal back. On a driver without a native transaction the database's floor snapshots the whole store, so a rollback restores every table to the scope's start.
 6. **Observation is a pure side-channel (§13).** A `Model` owns a typed `emitter` (`ModelEventMap` — `load(name, count)` / `link(key, relation)` / `unlink(key, relation)`); `RelationManager` is event-free by design (a stateless registry has no observable lifecycle). Every event is emitted directly (the AGENTS §13 convention: the emitter isolates a listener throw, routing it to its OWN `error` handler — the `error` option, surfaced as `(error, event)`, NOT a domain event — itself re-entrancy-guarded) strictly AFTER the load resolves / the junction op completes. `load` fires ONCE per relation (carrying the count of rows attached across the record set — no N+1 in the events), so a buggy observer can corrupt neither the batched eager-load nor a junction write (proven by the emit-safety tests). An idempotent no-op `link` emits nothing.
 7. **Cooperative cancellation.** Every model operation accepts the database package's abort option. Query reads pass the signal to `records`. The keyed `get` read takes no options in the database package, so `load` checks the signal before it and again before each relation in the population walk; a batched `get` already in flight runs to completion. Writes pass it to their database mutation or transaction. An aborted signal surfaces unchanged as the database package's `ABORTED` error.
@@ -183,7 +188,7 @@ The relation kinds, and where each foreign key lives:
 
 ### Resolving relations directly
 
-`resolveRelation` / `resolveRelationMap` / `isRelationDescriptor` are what `createRelationManager` calls internally to turn a raw `RelationMap` into `ResolvedRelation`s at construction — reach for them directly when validating a relation map before wiring a manager, or when testing a descriptor's inferred `relationship`:
+`resolveRelation` / `resolveRelationMap` / `isRelationDescriptor` are what `createRelationManager` calls internally to turn a raw `RelationMap` into one `ResolvedRelation` per entry at construction — reach for them directly when validating a relation map before wiring a manager, or when testing a descriptor's inferred `relationship`:
 
 ```ts
 import { isRelationDescriptor, resolveRelation, resolveRelationMap } from '@orkestrel/relation'
@@ -195,6 +200,22 @@ const map = resolveRelationMap({ contacts: hasMany('accountId') })
 map.get('contacts')?.relationship // 'many'
 
 isRelationDescriptor(belongsTo('classificationId')) // true — the object form
+```
+
+`ResolvedRelation` is a union discriminated on `relationship`, so narrow on that member
+before reading an arm's own columns. Each arm declares its columns required —
+`ResolvedThrough` carries `through` / `source` / `target`, `ResolvedMorph` carries `key` /
+`tag` / `label` — because `resolveRelation` refuses a descriptor missing one:
+
+```ts
+import { resolveRelation, hasThrough } from '@orkestrel/relation'
+
+const resolved = resolveRelation('reps', hasThrough('accountReps', 'accountId', 'repId'))
+if (resolved.relationship === 'through') {
+	resolved.through // 'accountReps' — a required string on this arm
+	resolved.source // 'accountId'
+	resolved.target // 'repId'
+}
 ```
 
 Catch a malformed relation with `isRelationError`, branching on its machine-readable `code`:
@@ -211,10 +232,10 @@ try {
 
 ### The registry surface
 
-Beyond `model(name)`, a `RelationManager` exposes `models()` (every table name with resolved relations) and `has(name)` (whether a given table has any):
+Beyond `model(name)`, a `RelationManager` exposes `names()` (every table name with resolved relations) and `has(name)` (whether a given table has any):
 
 ```ts
-manager.models() // e.g. ['accounts', 'contacts']
+manager.names() // e.g. ['accounts', 'contacts']
 manager.has('accounts') // true
 manager.has('unrelated_table') // false
 ```
@@ -314,8 +335,9 @@ The event vocabulary:
 ## Tests
 
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports).
-- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `isRelationDescriptor`.
-- [`tests/src/core/RelationManager.test.ts`](../tests/src/core/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `models` / `has`), the typed `model(name)` accessor, and construction-time `INVALID` errors for undeclared relation and junction tables.
+- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `readColumn`, `countAttached`.
+- [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — `isRelationDescriptor` over the object form, the builders' output, and the string / array shorthands.
+- [`tests/src/core/RelationManager.test.ts`](../tests/src/core/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `names` / `has`), the typed `model(name)` accessor, and construction-time `INVALID` errors for undeclared relation and junction tables.
 - [`tests/src/core/Model.test.ts`](../tests/src/core/Model.test.ts) — `Model` behavior: `load` / `find` populating each relation kind (batched, no N+1), nested `includes`, the loaded relation accessors, idempotent `link`, atomic `unlink`, cooperative cancellation, `links`, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it; a `Model` reached via the `RelationManager` has no `error` handler, so the throw is swallowed silently).
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRelationManager` wires up a working, typed manager end to end.
 
