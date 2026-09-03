@@ -1,8 +1,8 @@
 # Relation
 
-> A small, declarative ORM layer over the [database](database.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — a direct relation uses one query across the whole record set, while a `through` relation uses two (junction then target); either count stays constant as the parent count grows. Five relation kinds (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
+> A small, declarative ORM layer over the [database](database.md) module: name a table's relations once, then `load` / `find` records with their related rows already attached. Loading is **batched** — a direct relation uses one query across the whole record set, while a `through` relation uses two (junction then target); either count stays constant as the parent count grows. The relationships (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested includes recurse through the registry; `link` / `unlink` / `links` manage a many-to-many junction without hand-writing join rows.
 >
-> It deliberately stays **thin above the typed store**. Resolution is define-time (each relation is precomputed once into a flat `ResolvedRelation` — nothing is inferred while loading), and the loaded relation properties are intentionally **loose** (`Row | readonly Row[] | undefined`) rather than typed to each exact target row: the typed half is the table reached through `model.table`; relation loading is the looser convenience on top. No write-cascades, no lazy proxies, no query builder of its own — just batched eager loading and junction management. Source: [`src/core`](../src/core). Surfaced through the `@src/core` barrel.
+> It deliberately stays **thin above the typed store**. Resolution is define-time (each relation is precomputed once into a flat `ResolvedRelation` — nothing is inferred while loading), and the loaded relation properties are intentionally **loose** (`Row | readonly Row[] | undefined`) rather than typed to each exact target row: the typed half is the table reached through `model.table`; relation loading is the looser convenience on top. No write-cascades, no lazy proxies, no query builder of its own — batched eager loading and junction management. Source: [`src/core`](../src/core). Surfaced through the `@src/core` barrel.
 
 ## Surface
 
@@ -17,7 +17,7 @@ const manager = createRelationManager({
 		accounts: {
 			classification: belongsTo('classificationId', 'classifications'), // FK on accounts → one classification
 			contacts: hasMany('accountId'), // FK on contacts → many contacts back here
-			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // many-to-many via a junction
+			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // many-to-many through a junction
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') }, // so contacts can nest-load its account
 	},
@@ -64,6 +64,8 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 | --------------- | -------- | ----------------------------------------------------------------- |
 | `readColumn`    | function | Read one column off any record, whatever its declared type.       |
 | `countAttached` | function | Count the related rows one relation attached across a record set. |
+| `indexRows`     | function | Index rows by the string form of one column, for keyed lookups.   |
+| `groupRows`     | function | Group rows by the string form of one column, for many lookups.    |
 
 ### Errors
 
@@ -74,33 +76,33 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Types
 
-| Type                       | Kind      | Shape                                                                                                             |
-| -------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
-| `Relationship`             | type      | `'belongs' \| 'many' \| 'one' \| 'through' \| 'morph'`.                                                           |
-| `RelationDescriptor`       | interface | The object form — `relationship?` plus the per-relationship fields (`column` / `key` / `through` / …).            |
-| `Relation`                 | type      | `string` (belongs) \| `readonly string[]` (many) \| `RelationDescriptor`.                                         |
-| `RelationMap`              | type      | `Readonly<Record<string, Relation>>` — a model's relations by name.                                               |
-| `RelationsShape`           | type      | `{ [table]?: RelationMap }` — per-table relation maps, keyed by the database's tables.                            |
-| `ResolvedRelation`         | type      | A relation resolved at define-time — a union over the arms that follow, discriminated on `relationship`.          |
-| `ResolvedBelongs`          | interface | The `belongs` arm — `{ relationship, name, model, column }`, every member required.                               |
-| `ResolvedMany`             | interface | The `many` arm — `{ relationship, name, model, key }`, every member required.                                     |
-| `ResolvedOne`              | interface | The `one` arm — `{ relationship, name, model, key }`, every member required.                                      |
-| `ResolvedThrough`          | interface | The `through` arm — `{ relationship, name, model, through, source, target }`, every member required.              |
-| `ResolvedMorph`            | interface | The `morph` arm — `{ relationship, name, model, key, tag, label }`, every member required.                        |
-| `RelationErrorCode`        | type      | `'INVALID' \| 'UNKNOWN_RELATION' \| 'NOT_THROUGH'`.                                                               |
-| `Include`                  | interface | Which relations to populate (`true`), and recursively their own (nested `Include`).                               |
-| `Loaded`                   | type      | `T & Record<string, Row \| readonly Row[] \| undefined>` — a row with relations attached.                         |
-| `RelationProps`            | type      | `Record<string, Row \| readonly Row[] \| undefined>` — the relation-property bag of a `Loaded` row.               |
-| `RelationContext`          | interface | `{ resolved, primary }` — a related model's resolved relations + primary, for nesting.                            |
-| `FindOptions`              | interface | `{ limit?, offset?, sort?, direction?, signal? }` — pagination, ordering, and cancellation for `find`.            |
-| `ModelEventMap`            | type      | A model's push observation surface (§13) — `load(name, count)` · `link(key, relation)` · `unlink(key, relation)`. |
-| `ModelInterface`           | interface | `emitter` / `name` / `table` / `relations` + `load` / `find` / `link` / `unlink` / `links`.                       |
-| `RelationManagerOptions`   | interface | `{ database, relations? }` — input to `createRelationManager`.                                                    |
-| `RelationManagerInterface` | interface | `count` / `model` / `names` / `has`.                                                                              |
+| Type                       | Kind      | Shape                                                                                                       |
+| -------------------------- | --------- | ----------------------------------------------------------------------------------------------------------- |
+| `Relationship`             | type      | `'belongs' \| 'many' \| 'one' \| 'through' \| 'morph'`.                                                     |
+| `RelationDescriptor`       | interface | The object form — `relationship?` plus the per-relationship fields (`column` / `key` / `through` / …).      |
+| `Relation`                 | type      | `string` (belongs) \| `readonly string[]` (many) \| `RelationDescriptor`.                                   |
+| `RelationMap`              | type      | `Readonly<Record<string, Relation>>` — a model's relations by name.                                         |
+| `RelationsShape`           | type      | `{ [table]?: RelationMap }` — per-table relation maps, keyed by the database's tables.                      |
+| `ResolvedRelation`         | type      | A relation resolved at define-time — a union over the arms that follow, discriminated on `relationship`.    |
+| `ResolvedBelongs`          | interface | The `belongs` arm — `{ relationship, name, model, column }`, every member required.                         |
+| `ResolvedMany`             | interface | The `many` arm — `{ relationship, name, model, key }`, every member required.                               |
+| `ResolvedOne`              | interface | The `one` arm — `{ relationship, name, model, key }`, every member required.                                |
+| `ResolvedThrough`          | interface | The `through` arm — `{ relationship, name, model, through, source, target }`, every member required.        |
+| `ResolvedMorph`            | interface | The `morph` arm — `{ relationship, name, model, key, tag, label }`, every member required.                  |
+| `RelationErrorCode`        | type      | `'INVALID' \| 'UNKNOWN_RELATION' \| 'NOT_THROUGH'`.                                                         |
+| `Include`                  | interface | Which relations to populate (`true`), and recursively their own (nested `Include`).                         |
+| `Loaded`                   | type      | `T & Record<string, Row \| readonly Row[] \| undefined>` — a row with relations attached.                   |
+| `LoadedMap`                | type      | `Record<string, Row \| readonly Row[] \| undefined>` — the relation-property bag of a `Loaded` row.         |
+| `RelationContext`          | interface | `{ resolved, primary }` — a related model's resolved relations + primary, for nesting.                      |
+| `FindOptions`              | interface | `{ limit?, offset?, sort?, direction?, signal? }` — pagination, ordering, and cancellation for `find`.      |
+| `ModelEventMap`            | type      | A model's push observation surface — `load(name, count)` · `link(key, relation)` · `unlink(key, relation)`. |
+| `ModelInterface`           | interface | `emitter` / `name` / `table` / `relations` + `load` / `find` / `link` / `unlink` / `links`.                 |
+| `RelationManagerOptions`   | interface | `{ database, relations?, model? }` — input to `createRelationManager`.                                      |
+| `RelationManagerInterface` | interface | `count` / `model` / `names` / `has`.                                                                        |
 
 ## Methods
 
-The public methods of each behavioral interface — one table per type, keyed by its backticked name, every call-signature member listed (its `readonly` data members, e.g. `emitter` / `name` / `table` / `relations` / `count`, stay in the Surface rows above — `Model`'s `emitter` is the typed push observation surface, see [Observing](#observing)). `Model` and `RelationManager` each implement their interface exactly, so this doubles as the per-instance method surface (AGENTS §22).
+The public methods of each behavioral interface — one table per type, keyed by its backticked name, every call-signature member listed (its `readonly` data members, for example `emitter` / `name` / `table` / `relations` / `count`, stay in the Surface rows earlier — `Model`'s `emitter` is the typed push observation surface, see [Observing](#observing)). `Model` and `RelationManager` each implement their interface exactly, so this doubles as the per-instance method surface (`.claude/rules/documentation.md` § Parity).
 
 #### `ModelInterface`
 
@@ -128,16 +130,16 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 These invariants hold across `src/core` ↔ `relation.md`:
 
-1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` / `type` row in the `## Surface` tables is a real export of the relations source tree, and every export appears as a Surface row — exhaustive, both directions (AGENTS §22).
+1. **DOC ↔ SOURCE bijection.** Every `function` / `class` / `interface` / `type` row in the `## Surface` tables is a real export of the relations source tree, and every export appears as a Surface row — exhaustive, both directions (`.claude/rules/documentation.md` § Parity).
 2. **Layered on the typed database and validated at construction.** A manager is built over a `DatabaseInterface`; `model(name)` is checked against the database's declared tables and returns a model whose `table` is that table's typed `TableInterface` (a declared table with no relation entry yields a relation-less model — still fully usable for typed CRUD). Related tables are fetched by runtime name at the broad `Row` type. Every resolved target table and `through` junction must appear in `database.export()`; an undeclared table throws `RelationError('INVALID', ...)` when the manager is created, before any operation runs.
 3. **Batch loading — no N+1.** A direct included relation uses one query over the distinct foreign keys for the entire record set; a `through` relation uses two queries, one for the junction rows and one for the target rows. Related rows are grouped in memory and attached, so either query count is independent of how many parents were loaded. Nested includes recurse through the registry, and each nested level is batched again under the same rule.
 4. **Resolution is define-time.** Each raw `Relation` is resolved once at construction into a flat `ResolvedRelation` — a union discriminated on `relationship` whose every arm declares its own columns required, so a loader reads them after one narrow and never against an absent member; nothing is inferred during loading. The builders set an explicit `relationship` (so `many` and `one`, otherwise identical as `{ key }`, are unambiguous); a hand-written descriptor with no `relationship` infers one from the fields present (`through` → `through`, `tag` → `morph`, `column` → `belongs`, else `key` → `one`), and a malformed one throws `INVALID` at define-time.
-5. **Total, loose `Loaded`.** `Loaded<T>` is the base row (the table's row type) intersected with the broad relation bag `Readonly<RelationProps>` (`Row | readonly Row[] | undefined` per relation); a missed `belongs` / `one` is `undefined`, a missed `many` / `through` / `morph` is `[]`. Through-only operations (`link` / `unlink` / `links`) throw `NOT_THROUGH` on any other kind and `UNKNOWN_RELATION` for a relation the model never declared. `link` is idempotent for sequential calls: an existing `(key, target)` pair causes no write and no event. Concurrent `link` calls for the same pair may each insert. `unlink` removes all matching rows inside one database transaction, so a fault rolls the whole removal back. On a driver without a native transaction the database's floor snapshots the whole store, so a rollback restores every table to the scope's start.
-6. **Observation is a pure side-channel (§13).** A `Model` owns a typed `emitter` (`ModelEventMap` — `load(name, count)` / `link(key, relation)` / `unlink(key, relation)`); `RelationManager` is event-free by design (a stateless registry has no observable lifecycle). Every event is emitted directly (the AGENTS §13 convention: the emitter isolates a listener throw, routing it to its OWN `error` handler — the `error` option, surfaced as `(error, event)`, NOT a domain event — itself re-entrancy-guarded) strictly AFTER the load resolves / the junction op completes. `load` fires ONCE per relation (carrying the count of rows attached across the record set — no N+1 in the events), so a buggy observer can corrupt neither the batched eager-load nor a junction write (proven by the emit-safety tests). An idempotent no-op `link` emits nothing.
+5. **Total, loose `Loaded`.** `Loaded<T>` is the base row (the table's row type) intersected with the broad relation bag `Readonly<LoadedMap>` (`Row | readonly Row[] | undefined` per relation); a missed `belongs` / `one` is `undefined`, a missed `many` / `through` / `morph` is `[]`. Through-only operations (`link` / `unlink` / `links`) throw `NOT_THROUGH` on any other relationship and `UNKNOWN_RELATION` for a relation the model never declared. `link` is idempotent for sequential calls: an existing `(key, target)` pair causes no write and no event. Concurrent `link` calls for the same pair may each insert. `unlink` removes all matching rows inside one database transaction, so a fault rolls the whole removal back. On a driver without a native transaction the database's floor snapshots the whole store, so a rollback restores every table to the scope's start.
+6. **Observation is a pure side-channel.** A `Model` owns a typed `emitter` (`ModelEventMap` — `load(name, count)` / `link(key, relation)` / `unlink(key, relation)`); `RelationManager` is event-free by design (a stateless registry has no observable lifecycle). Every event is emitted directly (the `.claude/rules/patterns.md` § Stateful emitters convention: the emitter isolates a listener throw, routing it to its OWN `error` handler — the `error` option, surfaced as `(error, event)`, NOT a domain event — itself re-entrancy-guarded) strictly AFTER the load resolves / the junction op completes. `load` fires ONCE per relation (carrying the count of rows attached across the record set — no N+1 in the events), so a buggy observer can corrupt neither the batched eager-load nor a junction write (proven by the emit-safety tests). An idempotent no-op `link` emits nothing.
 7. **Cooperative cancellation.** Every model operation accepts the database package's abort option. Query reads pass the signal to `records`. The keyed `get` read takes no options in the database package, so `load` checks the signal before it and again before each relation in the population walk; a batched `get` already in flight runs to completion. Writes pass it to their database mutation or transaction. An aborted signal surfaces unchanged as the database package's `ABORTED` error.
-8. **DOC ↔ SOURCE method bijection.** Every behavioral interface's `## Methods` table lists exactly its public methods (call-signature members) — exhaustive, both directions — and each implementing class (`Model` / `RelationManager`) exposes the same public methods, no more (AGENTS §22). A renamed / added / removed method breaks the gate until the table is reconciled.
+8. **DOC ↔ SOURCE method bijection.** Every behavioral interface's `## Methods` table lists exactly its public methods (call-signature members) — exhaustive, both directions — and each implementing class (`Model` / `RelationManager`) exposes the same public methods, no more (`.claude/rules/documentation.md` § Parity). A renamed / added / removed method breaks the gate until the table is reconciled.
 
-Typing each loaded relation property to its exact target row (Prisma-style) is a deliberate, documented deferral — like the database guide's deferred pieces. The `Model` is now **observable** — it owns a typed `emitter` (`ModelEventMap`, §13) carrying its eager-load + junction moments (see [Observing](#observing)); `RelationManager` stays event-free by design (a stateless registry that merely vends models has no observable lifecycle of its own). Still out of scope: write-cascades; they are additive and leave the surface above unchanged.
+Typing each loaded relation property to its exact target row (Prisma-style) is a deliberate, documented deferral — like the database guide's deferred pieces. The `Model` is **observable** — it owns a typed `emitter` (`ModelEventMap`) carrying its eager-load + junction moments (see [Observing](#observing)); `RelationManager` stays event-free by design (a stateless registry that merely vends models has no observable lifecycle of its own). Still out of scope: write-cascades; they are additive and leave the documented surface unchanged.
 
 ## Patterns
 
@@ -160,7 +162,7 @@ const manager = createRelationManager({
 			classification: belongsTo('classificationId', 'classifications'), // FK on accounts
 			contacts: hasMany('accountId'), // FK on contacts → accounts
 			profile: hasOne('accountId', 'profiles'), // single, FK on profiles
-			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // via junction
+			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // through a junction
 			notes: hasMorph('entityId', 'entityType', 'account', 'notes'), // polymorphic
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') },
@@ -168,7 +170,7 @@ const manager = createRelationManager({
 })
 ```
 
-Two shorthands cover the common kinds — a bare string is a `belongsTo` column, and a one-element array is a `hasMany` key (both unambiguous, so they need no `relationship`):
+The shorthands cover the common relationships — a bare string is a `belongsTo` column, and a one-element array is a `hasMany` key (both unambiguous, so they need no `relationship`):
 
 ```ts
 relations: { accounts: { classification: 'classificationId', contacts: ['accountId'] } }
@@ -176,15 +178,15 @@ relations: { accounts: { classification: 'classificationId', contacts: ['account
 
 Reach for the builders for everything else: they set an explicit `relationship`, which is what disambiguates `many` from `one` (a raw `{ key }` descriptor infers `one`).
 
-The relation kinds, and where each foreign key lives:
+The relationships, and where each foreign key lives:
 
-| Kind      | Builder      | FK location    | Returns               |
-| --------- | ------------ | -------------- | --------------------- |
-| `belongs` | `belongsTo`  | THIS table     | single or `undefined` |
-| `many`    | `hasMany`    | RELATED table  | array                 |
-| `one`     | `hasOne`     | RELATED table  | single or `undefined` |
-| `through` | `hasThrough` | junction table | array                 |
-| `morph`   | `hasMorph`   | RELATED table  | array                 |
+| Relationship | Builder      | FK location    | Returns               |
+| ------------ | ------------ | -------------- | --------------------- |
+| `belongs`    | `belongsTo`  | THIS table     | single or `undefined` |
+| `many`       | `hasMany`    | RELATED table  | array                 |
+| `one`        | `hasOne`     | RELATED table  | single or `undefined` |
+| `through`    | `hasThrough` | junction table | array                 |
+| `morph`      | `hasMorph`   | RELATED table  | array                 |
 
 ### Resolving relations directly
 
@@ -235,7 +237,7 @@ try {
 Beyond `model(name)`, a `RelationManager` exposes `names()` (every table name with resolved relations) and `has(name)` (whether a given table has any):
 
 ```ts
-manager.names() // e.g. ['accounts', 'contacts']
+manager.names() // for example ['accounts', 'contacts']
 manager.has('accounts') // true
 manager.has('unrelated_table') // false
 ```
@@ -285,7 +287,7 @@ A `through` relation's junction rows are managed by key — no need to model the
 await accounts.link('acc1', 'representatives', 'rep3') // insert a junction row (accountId=acc1, repId=rep3)
 await accounts.link('acc1', 'representatives', 'rep3') // already linked, sequential call: no write and no event
 await accounts.unlink('acc1', 'representatives', 'rep1') // remove all matches atomically
-const repIds = await accounts.links('acc1', 'representatives') // the related keys reachable via the junction
+const repIds = await accounts.links('acc1', 'representatives') // the related keys reachable through the junction
 ```
 
 Pass an abort signal through the same operation option used by the database package:
@@ -305,12 +307,25 @@ await pending
 
 ### Observing
 
-Each `Model` exposes a typed `emitter` (AGENTS §13) carrying its eager-load + junction moments for fire-and-forget observers — logging, metrics, a sync layer. Subscribe via `model.emitter.on(...)`. **Emitting is observation-only**: every event fires strictly AFTER the load resolves / the junction op completes, so a listener can never change what a load does (and a throwing one can't corrupt it). The `RelationManager` is event-free by design — a stateless registry that merely vends models has no observable lifecycle of its own; observe the per-model handle instead.
+Each `Model` exposes a typed `emitter` carrying its eager-load + junction moments for fire-and-forget observers — logging, metrics, a sync layer. Subscribe through `model.emitter.on(...)`. **Emitting is observation-only**: every event fires strictly AFTER the load resolves / the junction op completes, so a listener can never change what a load does (and a throwing one can't corrupt it). The `RelationManager` is event-free by design — a stateless registry that merely vends models has no observable lifecycle of its own; observe the per-model handle instead.
 
 ```ts
 const accounts = manager.model('accounts')
 accounts.emitter.on('load', (name, count) => metrics.record(`relation.${name}`, count))
 accounts.emitter.on('link', (key, relation) => sync.push(key, relation))
+```
+
+`model(name)` returns a fresh handle on every call, and each handle owns its own emitter. Retain the handle you subscribed to; a later `manager.model('accounts')` is a different observer surface. To observe every handle a manager vends, pass the listeners once as the manager's `model` option:
+
+```ts
+const manager = createRelationManager({
+	database: db,
+	relations: { accounts: { contacts: hasMany('accountId') } },
+	model: {
+		on: { load: (name, count) => metrics.record(`relation.${name}`, count) },
+		error: (error, event) => metrics.fault(event, error),
+	},
+})
 ```
 
 The event vocabulary:
@@ -321,7 +336,7 @@ The event vocabulary:
 
 `load` fires ONCE per relation an eager-load resolves (`load` / `find`, including each nested relation) — carrying the relation name + the COUNT of related rows attached across the whole record set (the batched load has no N+1, and neither do its events — it is not one event per record); `link` / `unlink` fire after a junction row is inserted / removed, carrying the owning key + the relation name. Reads of the base rows are the table's concern (observe `model.table.emitter` for per-row `write` / `remove`).
 
-**The listener-isolation safety guarantee.** A listener throw is NEVER allowed to escape into the load: the emitter isolates it and routes it to its OWN `error` handler (the `error` option, surfaced as `(error, event)`), NOT to a domain event — so a buggy observer is isolated yet not silently lost. The `error` handler runs in its own try/catch, so even a throwing handler can't recurse or escape; with no handler, the throw is swallowed silently. Because every emit sits after its transition AND is isolated, a buggy observer **cannot corrupt the batched eager-load or a junction write** — the load still resolves correctly and the junction row is still written — proven by the emit-safety tests. (A `Model` is reached via the `RelationManager`, which does not thread an `error` handler to it, so a `Model` listener throw is swallowed silently.)
+**The listener-isolation safety guarantee.** A listener throw is NEVER allowed to escape into the load: the emitter isolates it and routes it to its OWN `error` handler (the `error` option, surfaced as `(error, event)`), NOT to a domain event — so a buggy observer is isolated yet not silently lost. The `error` handler runs in its own try/catch, so even a throwing handler can't recurse or escape; with no handler, the throw is swallowed silently. Because every emit sits after its transition AND is isolated, a buggy observer **cannot corrupt the batched eager-load or a junction write** — the load still resolves correctly and the junction row is still written — proven by the emit-safety tests. A `Model` is reached through the `RelationManager`, which threads the `model.error` option into every handle it vends, so set that option to receive a `Model` listener throw; leave it unset and the throw is swallowed silently.
 
 ### Practices
 
@@ -335,14 +350,14 @@ The event vocabulary:
 ## Tests
 
 - [`tests/guides.test.ts`](../tests/guides.test.ts) — the `## Surface` ↔ `src/core` bijection (value + type exports).
-- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors), `resolveRelationMap`, `readColumn`, `countAttached`.
-- [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — `isRelationDescriptor` over the object form, the builders' output, and the string / array shorthands.
+- [`tests/src/core/helpers.test.ts`](../tests/src/core/helpers.test.ts) — `resolveRelation` (shorthands, builders, inference, errors, a wrong-typed descriptor member), `resolveRelationMap`, `readColumn`, `countAttached`, `indexRows`, `groupRows`.
+- [`tests/src/core/validators.test.ts`](../tests/src/core/validators.test.ts) — `isRelationDescriptor` over the object form, the builders' output, the string / array shorthands, a member holding the wrong type, and a `relationship` outside the union.
 - [`tests/src/core/RelationManager.test.ts`](../tests/src/core/RelationManager.test.ts) — the manager-level surface: the registry (`count` / `names` / `has`), the typed `model(name)` accessor, and construction-time `INVALID` errors for undeclared relation and junction tables.
-- [`tests/src/core/Model.test.ts`](../tests/src/core/Model.test.ts) — `Model` behavior: `load` / `find` populating each relation kind (batched, no N+1), nested `includes`, the loaded relation accessors, idempotent `link`, atomic `unlink`, cooperative cancellation, `links`, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it; a `Model` reached via the `RelationManager` has no `error` handler, so the throw is swallowed silently).
+- [`tests/src/core/Model.test.ts`](../tests/src/core/Model.test.ts) — `Model` behavior: `load` / `find` populating each relationship (batched, no N+1), nested `includes`, the loaded relation accessors, idempotent `link`, atomic `unlink`, cooperative cancellation, `links`, and the `emitter` (`ModelEventMap`): `load(name, count)` fires once per relation (the attached count, including nested relations — not one per record), `link` / `unlink` carry the owning key + relation, `on?` wiring through the manager's `model` option, and the emit-safety guarantee (a throwing `load` / `link` observer can't corrupt the load or junction write — the emitter isolates it and routes it to the `model.error` handler when the manager carries one).
 - [`tests/src/core/factories.test.ts`](../tests/src/core/factories.test.ts) — `createRelationManager` wires up a working, typed manager end to end.
 
 ## See also
 
 - [`database.md`](database.md) — the database, tables, and query layer relations build on.
-- [`AGENTS.md`](../AGENTS.md) — the rules; §12 errors, §14 totality, §22 documentation-as-contracts.
+- [`AGENTS.md`](../AGENTS.md) — the coding contract and its rule map.
 - [`README.md`](README.md) — the guides index.

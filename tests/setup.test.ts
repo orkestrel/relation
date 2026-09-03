@@ -2,18 +2,13 @@ import type { Row, TableSchema } from '@orkestrel/database'
 import { compileGuard } from '@orkestrel/contract'
 import { createMemoryDriver, shapeToColumnStorage } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
-import {
-	FaultDriver,
-	INTEGRATION_RELATIONS,
-	INTEGRATION_TABLES,
-	isBrowserVuePath,
-} from './setup.js'
+import { FaultDriver, INTEGRATION_RELATIONS, INTEGRATION_TABLES } from './setup.js'
 
 // The base test setup module's proof (`tests/setup.ts`). Its subject is the exported test
-// infrastructure the workspace's suites rely on — the fixture shape maps, the browser path
-// predicate, and the fault-injecting driver boundary — never the relation behavior those
-// suites assert. `tests/setup.ts` is host-independent, so every contract here is reachable
-// from the Node-hosted `setup` project.
+// infrastructure the workspace's suites rely on — the fixture shape maps and the
+// fault-injecting driver boundary — never the relation behavior those suites assert.
+// `tests/setup.ts` is host-independent, so every contract here is reachable from the
+// Node-hosted `setup` project.
 //
 // Each expectation arrives by a route `tests/setup.ts` does not share: a column's contract
 // is read back through the compiled guard rather than through the shape builder that
@@ -86,24 +81,6 @@ describe('INTEGRATION_RELATIONS', () => {
 		if (column === undefined) throw new Error(`posts declares no ${String(relation.key)} column`)
 		const [, shape] = column
 		expect(shapeToColumnStorage(shape)).toBe(shapeToColumnStorage(INTEGRATION_TABLES.users.id))
-	})
-})
-
-describe('isBrowserVuePath', () => {
-	it('accepts a browser application path in either separator family', () => {
-		expect(isBrowserVuePath('app/browser/pages/Home.vue')).toBe(true)
-		expect(isBrowserVuePath('app\\browser\\pages\\Home.vue')).toBe(true)
-		expect(isBrowserVuePath('app/browser/components/panel/Row.vue')).toBe(true)
-		expect(isBrowserVuePath('app\\browser\\components\\panel\\Row.vue')).toBe(true)
-	})
-
-	it('refuses a sibling environment, a prefix lookalike, and an unanchored match', () => {
-		expect(isBrowserVuePath('app/server/pages/Home.vue')).toBe(false)
-		expect(isBrowserVuePath('app/core/Home.vue')).toBe(false)
-		expect(isBrowserVuePath('app/browserkit/Home.vue')).toBe(false)
-		expect(isBrowserVuePath('app\\browserkit\\Home.vue')).toBe(false)
-		expect(isBrowserVuePath('src/app/browser/Home.vue')).toBe(false)
-		expect(isBrowserVuePath('app/browser.vue')).toBe(false)
 	})
 })
 

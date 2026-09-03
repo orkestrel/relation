@@ -22,12 +22,6 @@ export const INTEGRATION_RELATIONS: RelationsShape<typeof INTEGRATION_TABLES> = 
 	users: { posts: hasMany('author') },
 }
 
-/** Whether a repository-relative Vue SFC path belongs to the private browser application. */
-export function isBrowserVuePath(path: string): boolean {
-	const normalized = path.replaceAll('\\', '/')
-	return normalized.startsWith('app/browser/')
-}
-
 // ── Driver fault fixtures ─────────────────────────────────────────────────────
 
 /** A real driver boundary that injects one configured delete failure. */

@@ -5,7 +5,7 @@ tables — name a table's relations once, then `load` / `find` records with thei
 related rows already attached. Loading is **batched** — a direct relation uses
 one query across the whole record set, while a `through` relation uses two
 (junction then target); either count stays constant as the parent count grows.
-Five relation kinds
+The relationships
 (`belongs` / `many` / `one` / `through` / `morph`) cover the FK shapes; nested
 includes recurse through the registry; `link` / `unlink` / `links` manage a
 many-to-many junction without hand-writing join rows. Environment-agnostic —
@@ -19,8 +19,8 @@ npm install @orkestrel/relation
 
 ## Requirements
 
-- Node.js >= 24
-- ESM-only (no CommonJS build)
+- Node.js >= 22.12.0, matching the `engines` field in `package.json`
+- ESM (`import`) and CommonJS (`require`) through the `exports` field
 
 ## Usage
 

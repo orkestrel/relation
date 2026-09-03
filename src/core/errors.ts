@@ -1,7 +1,8 @@
 import type { RelationErrorCode } from './types.js'
 
-// AGENTS §12: invalid relation definitions and misuse `throw` a `RelationError`
-// carrying a machine-readable `code`, so a `catch` branches on `error.code`.
+// Invalid relation definitions and misuse `throw` a `RelationError` carrying a
+// machine-readable `code`, so a `catch` branches on `error.code`
+// (`.claude/rules/typescript.md` § Errors and outcomes).
 
 /**
  * Represents an error thrown by the relations layer.

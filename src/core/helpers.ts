@@ -11,8 +11,8 @@ import { isRelationDescriptor } from './validators.js'
 import { RelationError } from './errors.js'
 
 // Resolve raw relation values into the flat `ResolvedRelation` form once, at
-// define-time, so no inference runs during loading. The builders below set an
-// explicit `relationship`; hand-written descriptors fall back to field inference.
+// define-time, so no inference runs during loading. The builders in this file set
+// an explicit `relationship`; hand-written descriptors fall back to field inference.
 
 // === Resolution
 
@@ -196,6 +196,64 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
 		else if (value !== undefined) total += 1
 	}
 	return total
+}
+
+/**
+ * Indexes rows by the string form of one column, for keyed lookups.
+ *
+ * @remarks
+ * The column is read with {@link readColumn} and its value stringified, so a numeric
+ * and a string foreign key meet at the same entry. A later row with a key an earlier
+ * row already holds replaces it, and a row missing the column indexes under the string
+ * `'undefined'`. This is the projection a `belongs` load and a `through` load use to
+ * attach one related row per key.
+ *
+ * @param rows - The rows to index
+ * @param column - The column to key on
+ * @returns A read-only map from each key's string form to its row
+ *
+ * @example
+ * ```ts
+ * indexRows([{ id: 'r1' }, { id: 'r2' }], 'id').get('r1') // { id: 'r1' }
+ * ```
+ */
+export function indexRows(rows: readonly Row[], column: string): ReadonlyMap<string, Row> {
+	const index = new Map<string, Row>()
+	for (const row of rows) index.set(String(readColumn(row, column)), row)
+	return index
+}
+
+/**
+ * Groups rows by the string form of one column, for one-to-many lookups.
+ *
+ * @remarks
+ * The column is read with {@link readColumn} and its value stringified, so a numeric
+ * and a string foreign key meet at the same group. Rows keep their input order inside
+ * a group, a key no row carries is absent rather than empty, and a row missing the
+ * column groups under the string `'undefined'`. This is the projection a `many` load
+ * and a `morph` load use to attach every related row per key.
+ *
+ * @param rows - The rows to group
+ * @param column - The column to key on
+ * @returns A read-only map from each key's string form to its rows, in input order
+ *
+ * @example
+ * ```ts
+ * groupRows([{ author: 'u1' }, { author: 'u1' }], 'author').get('u1')?.length // 2
+ * ```
+ */
+export function groupRows(
+	rows: readonly Row[],
+	column: string,
+): ReadonlyMap<string, readonly Row[]> {
+	const groups = new Map<string, Row[]>()
+	for (const row of rows) {
+		const key = String(readColumn(row, column))
+		const group = groups.get(key)
+		if (group !== undefined) group.push(row)
+		else groups.set(key, [row])
+	}
+	return groups
 }
 
 // === Builders

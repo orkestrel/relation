@@ -8,19 +8,19 @@ import type {
 	TableInterface,
 	TableMap,
 } from '@orkestrel/database'
-import type { EmitterInterface } from '@orkestrel/emitter'
+import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkestrel/emitter'
 
 // Relations — ORM-style eager loading layered on the database. A relation
 // manager is created over a database and a declarative map of per-table
 // relations; each model pairs a typed table with relation-aware `load` / `find`
 // and through-table management. Loading is batched (one query per direct relation
 // or two per through relation over the whole record set, grouped in memory — no
-// N+1). Types are the source of truth (AGENTS §2).
+// N+1). Types are the source of truth.
 
-// === Relation kinds & descriptors
+// === Relationships & descriptors
 
 /**
- * Enumerates the five relation shapes.
+ * Enumerates the relationships a relation can declare.
  *
  * @remarks
  * `belongs` — a foreign key on THIS table points at the related row (single).
@@ -206,18 +206,18 @@ export interface Include {
  * site. This is the mutable bag a `Model` fills while populating a record set;
  * `Loaded<T>` is a base row intersected with its `Readonly` form.
  */
-export type RelationProps = Record<string, Row | readonly Row[] | undefined>
+export type LoadedMap = Record<string, Row | readonly Row[] | undefined>
 
 /**
  * Represents a row with its loaded relation properties attached.
  *
  * @remarks
  * The base row is fully typed (the table's row type); the relation properties
- * ({@link RelationProps}) are broad — narrow them at the use site. Typing each
+ * ({@link LoadedMap}) are broad — narrow them at the use site. Typing each
  * relation property to its target row is a deliberate (documented) deferral, like
  * the database guide's deferred pieces.
  */
-export type Loaded<T> = T & Readonly<RelationProps>
+export type Loaded<T> = T & Readonly<LoadedMap>
 
 /**
  * Holds a related model's resolved relations and primary-key column, for nested loading.
@@ -245,29 +245,25 @@ export interface FindOptions extends OperationOptions {
 // === Model
 
 /**
- * Declares the push observation surface of a {@link ModelInterface} (AGENTS §13) — the
+ * Declares the push observation surface of a {@link ModelInterface} — the
  * eager-load + junction-management moments a fire-and-forget observer (logging, metrics,
  * a sync layer) subscribes to.
- *
- * @typeParam TKey - The model's primary-key type (a {@link Key}); `link` / `unlink` carry
- *   the owning key so the map is `ModelEventMap<TKey>`.
  *
  * @remarks
  * `load` fires once per relation that an eager-load resolves, carrying the relation NAME +
  * the COUNT of related rows attached for the whole record set (it is the batched load
  * moment, not one event per record — there is no N+1 in the events either). `link` /
  * `unlink` fire after a junction row is inserted / removed, carrying the owning key + the
- * relation name. Listener isolation is the emitter's (AGENTS §13): every event is emitted
+ * relation name. Listener isolation is the emitter's: every event is emitted
  * directly and a listener throw is routed to the emitter's `error` handler (the `error`
  * option), never onto this map, and sits AFTER the load resolves / the junction op completes
  * — so a throwing observer can never corrupt the eager-load batching or a junction write.
  * `RelationManager` is event-free by design (a stateless
  * registry that merely vends models — it has no observable lifecycle of its own); the
  * per-entity {@link ModelInterface} is where loading and linking happen, so the emitter
- * lives there. Subscribe via `model.emitter.on(...)`. Declared as a `type` alias (§4.5 —
- * `EventMap` is a `type` kind).
+ * lives there. Subscribe through `model.emitter.on(...)`.
  */
-export type ModelEventMap<TKey extends Key = Key> = {
+export type ModelEventMap = {
 	/**
 	 * Fires when a relation is eager-loaded — the relation name + the count of related rows
 	 * attached.
@@ -277,12 +273,12 @@ export type ModelEventMap<TKey extends Key = Key> = {
 	 * Fires after a junction row is inserted for a `through` relation — the owning key +
 	 * relation name.
 	 */
-	readonly link: readonly [key: TKey, relation: string]
+	readonly link: readonly [key: Key, relation: string]
 	/**
 	 * Fires after a junction row is removed for a `through` relation — the owning key +
 	 * relation name.
 	 */
-	readonly unlink: readonly [key: TKey, relation: string]
+	readonly unlink: readonly [key: Key, relation: string]
 }
 
 /**
@@ -296,7 +292,7 @@ export type ModelEventMap<TKey extends Key = Key> = {
  * fetches many; both batch-load (one query per direct relation or two per
  * `through`, regardless of result size). `link` / `unlink` / `links` manage a
  * `through` relation's junction rows.
- * Exposes a typed {@link emitter} (AGENTS §13) carrying the eager-load + junction
+ * Exposes a typed {@link emitter} carrying the eager-load + junction
  * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
  * `link` is idempotent for sequential calls: an existing pair writes nothing and
@@ -322,7 +318,16 @@ export interface ModelInterface<T = Row> {
 
 // === Manager
 
-/** Configures `createRelationManager`. */
+/**
+ * Configures `createRelationManager`.
+ *
+ * @remarks
+ * `model` carries the emitter settings the manager threads into every model it
+ * vends: `model.on` seeds each vended handle's initial {@link ModelEventMap}
+ * listeners, and `model.error` receives a listener throw as `(error, event)`.
+ * Each `model(name)` call constructs a handle with its own emitter, so these
+ * settings apply per handle rather than once for the manager.
+ */
 export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	/**
 	 * Holds the database to build the registry over.
@@ -334,6 +339,10 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	 */
 	readonly database: DatabaseInterface<T> & DatabaseInterface
 	readonly relations?: RelationsShape<T>
+	readonly model?: {
+		readonly on?: EmitterHooks<ModelEventMap>
+		readonly error?: EmitterErrorHandler
+	}
 }
 
 /**
@@ -342,7 +351,8 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
  * @remarks
  * Built from a database and a {@link RelationsShape}; relations are resolved once
  * at construction. `model(name)` returns the model for a declared table, typed by
- * that table's row.
+ * that table's row. Each call constructs a model, and the returned handle owns its
+ * own emitter, so retain the handle a subscription is taken on.
  */
 export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number

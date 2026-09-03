@@ -1,4 +1,4 @@
-import type { ModelEventMap } from '@src/core'
+import type { ModelEventMap, RelationManagerOptions } from '@src/core'
 import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
 import type { DriverInterface, Row } from '@orkestrel/database'
 import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
@@ -8,11 +8,11 @@ import { createRecorder, createRecorders } from '@orkestrel/test'
 import { FaultDriver } from '../../setup.js'
 
 // `Model` behavior — the relation-aware half of the relations layer: `load` /
-// `find` populating each relation kind (batched, no N+1), nested `includes`, the
+// `find` populating each relationship (batched, no N+1), nested `includes`, the
 // loaded relation accessors, and `link` / `unlink` / `links` junction management.
 // The manager-level surface (`model()` accessor, registry counts) lives in
 // RelationManager.test.ts. Uses a real memory-backed relational scenario covering
-// all five relation kinds (no mocks, AGENTS §16).
+// every relationship (no mocks).
 
 // Narrow the loose `Loaded` relation properties for assertions (no `as`).
 function rows(value: unknown): readonly Row[] {
@@ -22,7 +22,16 @@ function one(value: unknown): Row {
 	return isRecord(value) ? value : {}
 }
 
-async function setup(driver: DriverInterface = createMemoryDriver()) {
+// An observer that always throws, so the emitter's isolation and the manager's `model.error`
+// handler are both observable from one load.
+function throwLoadObserver(): void {
+	throw new Error('load observer blew up')
+}
+
+async function setup(
+	driver: DriverInterface = createMemoryDriver(),
+	model?: RelationManagerOptions['model'],
+) {
 	const db = createDatabase({
 		driver,
 		tables: {
@@ -69,6 +78,7 @@ async function setup(driver: DriverInterface = createMemoryDriver()) {
 			},
 			contacts: { account: belongsTo('accountId', 'accounts') },
 		},
+		...(model !== undefined ? { model } : {}),
 	})
 	return { db, manager, accounts: manager.model('accounts') }
 }
@@ -89,7 +99,7 @@ describe('Model — surface', () => {
 	})
 })
 
-describe('Model — load (relation kinds)', () => {
+describe('Model — load (relationships)', () => {
 	it('loads belongs (single, FK on this table)', async () => {
 		const { accounts } = await setup()
 		const acme = await accounts.load('acc1', { classification: true })
@@ -237,22 +247,23 @@ describe('Model — cancellation', () => {
 	})
 })
 
-// ── Emitter — the PUSH observation surface (AGENTS §13) ──────────────────────
+// ── Emitter — the PUSH observation surface ───────────────────────────────────
 //
 // A Model exposes a typed `emitter` (`ModelEventMap`) carrying its eager-load + junction
 // moments — `load` (a relation resolved: its name + the count of related rows attached
 // across the whole record set), `link` / `unlink` (a junction row written) — for
 // fire-and-forget observers. Every event is emitted directly; the emitter isolates a listener
-// throw (it can never escape into the batched eager-load, AGENTS §13), and every emit sits
-// AFTER the load resolves / the junction op completes. A Model is reached through the
-// RelationManager, which does not thread an `error` handler to it, so a listener throw is
-// swallowed silently. These pin: `load` fires ONCE per relation (not per record — no N+1 in
-// the events) with the attached count; `link` / `unlink` carry the owning key + relation; and
-// the emit-safety guarantee — a throwing observer cannot corrupt the load result.
+// throw (it can never escape into the batched eager-load), and every emit sits AFTER the load
+// resolves / the junction op completes. A Model is reached through the RelationManager, which
+// threads its `model.on` and `model.error` options into every handle it vends. These pin:
+// `load` fires ONCE per relation (not per record — no N+1 in the events) with the attached
+// count; `link` / `unlink` carry the owning key + relation; the manager's `model` option seeds
+// a vended handle's listeners and receives their throws; and the emit-safety guarantee — a
+// throwing observer cannot corrupt the load result.
 
 // The ModelEventMap event names recorded across the emitter tests — fed to `createRecorders`
-// from `@orkestrel/test` (AGENTS §16.1: the per-event wiring is centralized; this file keeps
-// only the names its scenarios observe).
+// from `@orkestrel/test` (`.claude/rules/tests.md` § Shared test infrastructure: the per-event
+// wiring is centralized; this file keeps only the names its scenarios observe).
 const MODEL_EVENTS: readonly ['load', 'link', 'unlink'] = ['load', 'link', 'unlink']
 
 // `createRecorders` takes `TName` explicitly: `TMap` appears only inside the generic `on` of
@@ -300,12 +311,39 @@ describe('Model — emitter (push observation surface)', () => {
 		expect(events.unlink.calls).toEqual([['acc1', 'reps']])
 	})
 
-	it('wires initial listeners through the model handle', async () => {
+	it('delivers load to a listener subscribed on the handle', async () => {
 		const { accounts } = await setup()
 		const load = createRecorder<[name: string, count: number]>()
 		accounts.emitter.on('load', load.handler)
 		await accounts.load('acc1', { profile: true })
 		expect(load.calls).toEqual([['profile', 1]])
+	})
+
+	it('seeds a vended handle with the initial listeners the manager model option carries', async () => {
+		const load = createRecorder<[name: string, count: number]>()
+		const { accounts } = await setup(createMemoryDriver(), { on: { load: load.handler } })
+		await accounts.load('acc1', { profile: true })
+		expect(load.calls).toEqual([['profile', 1]])
+	})
+
+	it('routes a throwing listener to the error handler the manager model option carries', async () => {
+		const failures = createRecorder<[error: unknown, event: string]>()
+		const { accounts } = await setup(createMemoryDriver(), {
+			on: { load: throwLoadObserver },
+			error: failures.handler,
+		})
+		// The load still resolves — the emitter isolates the throw and reports it as
+		// `(error, event)` to the handler the manager threaded in.
+		const acme = await accounts.load('acc1', { contacts: true })
+		expect(
+			rows(acme?.contacts)
+				.map((contact) => contact.id)
+				.sort(),
+		).toEqual(['con1', 'con2'])
+		expect(failures.calls.map(([, event]) => event)).toEqual(['load'])
+		expect(
+			failures.calls.map(([error]) => (error instanceof Error ? error.message : undefined)),
+		).toEqual(['load observer blew up'])
 	})
 
 	it('EMIT SAFETY: a throwing load listener cannot corrupt the loaded result (the emitter isolates it)', async () => {
@@ -314,8 +352,8 @@ describe('Model — emitter (push observation surface)', () => {
 			throw new Error('load observer blew up')
 		})
 		// THE LOAD-BEARING ASSERTION: the eager-load still resolves correctly despite the throw
-		// (the emitter isolated it — a Model reached via the RelationManager has no `error`
-		// handler, so it is swallowed silently — and it never escaped).
+		// (the emitter isolated it — this manager carries no `model.error` option, so the throw
+		// is swallowed silently — and it never escaped).
 		const acme = await accounts.load('acc1', { contacts: true })
 		const contacts = rows(acme?.contacts)
 		expect(contacts.map((c) => c.id).sort()).toEqual(['con1', 'con2'])

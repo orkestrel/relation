@@ -10,11 +10,11 @@ import type {
 	FindOptions,
 	Include,
 	Loaded,
+	LoadedMap,
 	ModelEventMap,
 	ModelInterface,
 	RelationContext,
 	RelationMap,
-	RelationProps,
 	ResolvedBelongs,
 	ResolvedMany,
 	ResolvedMorph,
@@ -25,7 +25,7 @@ import type {
 import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
 import { isArray, isDefined } from '@orkestrel/contract'
-import { countAttached, readColumn } from './helpers.js'
+import { countAttached, groupRows, indexRows, readColumn } from './helpers.js'
 import { RelationError } from './errors.js'
 
 /**
@@ -41,7 +41,7 @@ import { RelationError } from './errors.js'
  * type is closed) and relation properties merged with `Object.assign` — no `as`.
  *
  * @remarks
- * - **Observable (§13).** The owned {@link emitter} ({@link ModelEventMap}) carries the
+ * - **Observable.** The owned {@link emitter} ({@link ModelEventMap}) carries the
  *   eager-load + junction moments — `load` (a relation resolved: its name + the count of
  *   related rows attached across the whole record set), `link` / `unlink` (a junction row
  *   written) — for fire-and-forget observers. Every event is emitted directly, strictly
@@ -49,6 +49,23 @@ import { RelationError } from './errors.js'
  *   throw and routes it to its `error` handler (the `error` option), so a buggy observer can
  *   never corrupt the batched eager-load (no N+1 in the events either — one `load` per
  *   relation, not per record).
+ *
+ * @example
+ * ```ts
+ * import { Model, resolveRelationMap, hasMany } from '@orkestrel/relation'
+ *
+ * const relations = { posts: hasMany('author') }
+ * const users = new Model(
+ * 	'users',
+ * 	database.table('users'),
+ * 	resolveRelationMap(relations),
+ * 	relations,
+ * 	() => undefined,
+ * 	database,
+ * )
+ * users.emitter.on('load', (name, count) => metrics.record(`relation.${name}`, count))
+ * const ada = await users.load('u1', { posts: true })
+ * ```
  */
 export class Model<T = Row> implements ModelInterface<T> {
 	readonly #name: string
@@ -57,11 +74,25 @@ export class Model<T = Row> implements ModelInterface<T> {
 	readonly #relations: RelationMap
 	readonly #lookup: (model: string) => RelationContext | undefined
 	readonly #database: DatabaseInterface
-	// The PUSH observation surface (§13) — owned, never inherited. The emitter isolates a
+	// The PUSH observation surface — owned, never inherited. The emitter isolates a
 	// listener throw (routing it to the `error` handler), so it can never escape into the
 	// batched eager-load.
 	readonly #emitter: Emitter<ModelEventMap>
 
+	/**
+	 * Constructs a model over one table and its resolved relations.
+	 *
+	 * @param name - The model's table name
+	 * @param table - The typed table this model's own reads and writes go through
+	 * @param resolved - The model's relations, resolved by `resolveRelationMap`
+	 * @param relations - The raw relation map the resolved relations came from
+	 * @param lookup - Reads a related model's {@link RelationContext} for a nested include,
+	 *   and returns `undefined` for a model the registry does not hold
+	 * @param database - The broad database used to read related and junction tables by name
+	 * @param on - Initial {@link ModelEventMap} listeners
+	 * @param error - Receives a listener throw as `(error, event)`. Default: the throw is
+	 *   swallowed.
+	 */
 	constructor(
 		name: string,
 		table: TableInterface<T>,
@@ -278,9 +309,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolvedMap: ReadonlyMap<string, ResolvedRelation>,
 		primary: string,
 		options?: OperationOptions,
-	): Promise<RelationProps[]> {
+	): Promise<LoadedMap[]> {
 		checkAbort(options?.signal)
-		const props: RelationProps[] = records.map(() => ({}))
+		const props: LoadedMap[] = records.map(() => ({}))
 		for (const [name, sub] of Object.entries(include)) {
 			if (sub === false) continue
 			checkAbort(options?.signal)
@@ -344,7 +375,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const index = this.#index(await this.#nest(resolved.model, rows, sub, options), related.primary)
+		const index = indexRows(await this.#nest(resolved.model, rows, sub, options), related.primary)
 		return records.map((record) => {
 			const fk = readColumn(record, column)
 			return isDefined(fk) ? index.get(String(fk)) : undefined
@@ -369,7 +400,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
+		const groups = groupRows(await this.#nest(resolved.model, rows, sub, options), foreign)
 		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 
@@ -430,7 +461,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const index = this.#index(await this.#nest(resolved.model, rows, sub, options), related.primary)
+		const index = indexRows(await this.#nest(resolved.model, rows, sub, options), related.primary)
 
 		return records.map((record) => {
 			const out: Row[] = []
@@ -468,7 +499,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const groups = this.#group(await this.#nest(resolved.model, rows, sub, options), foreign)
+		const groups = groupRows(await this.#nest(resolved.model, rows, sub, options), foreign)
 		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 
@@ -484,24 +515,5 @@ export class Model<T = Row> implements ModelInterface<T> {
 		if (context === undefined) return rows
 		const props = await this.#populate(rows, sub, context.resolved, context.primary, options)
 		return rows.map((row, index) => Object.assign({}, row, props[index]))
-	}
-
-	// Index rows by the string form of a column (for one-to-one key lookups).
-	#index(rows: readonly Row[], column: string): Map<string, Row> {
-		const map = new Map<string, Row>()
-		for (const row of rows) map.set(String(readColumn(row, column)), row)
-		return map
-	}
-
-	// Group rows by the string form of a column (for one-to-many lookups).
-	#group(rows: readonly Row[], column: string): Map<string, Row[]> {
-		const map = new Map<string, Row[]>()
-		for (const row of rows) {
-			const key = String(readColumn(row, column))
-			const group = map.get(key)
-			if (group !== undefined) group.push(row)
-			else map.set(key, [row])
-		}
-		return map
 	}
 }

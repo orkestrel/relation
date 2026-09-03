@@ -21,17 +21,43 @@ import { Model } from './Model.js'
  * and at the broad `DatabaseInterface` (to fetch related tables by runtime name
  * while loading). Construction validates every target and junction against the
  * database's declared tables, so invalid definitions fail before an operation runs.
+ * The `model` option's `on` and `error` are threaded into every model vended, and
+ * each `model(name)` call constructs a handle owning its own emitter, so retain the
+ * handle a subscription is taken on.
+ *
+ * @example
+ * ```ts
+ * import { RelationManager, hasMany } from '@orkestrel/relation'
+ *
+ * const manager = new RelationManager({
+ * 	database,
+ * 	relations: { users: { posts: hasMany('author') } },
+ * 	model: { on: { load: (name, count) => metrics.record(`relation.${name}`, count) } },
+ * })
+ * const users = manager.model('users')
+ * const ada = await users.load('u1', { posts: true })
+ * ```
  */
 export class RelationManager<T extends TableMap = TableMap> implements RelationManagerInterface<T> {
 	readonly #database: DatabaseInterface<T>
 	readonly #broad: DatabaseInterface
 	readonly #relations: RelationsShape<T>
+	readonly #model: RelationManagerOptions['model']
 	readonly #resolved = new Map<string, ReadonlyMap<string, ResolvedRelation>>()
 
+	/**
+	 * Constructs a registry over a database and its relation definitions.
+	 *
+	 * @param options - The `database`, an optional `relations` map, and the optional
+	 *   `model` emitter settings threaded into every model vended
+	 * @throws An `INVALID` {@link RelationError} when a relation targets a table or a
+	 *   junction the database does not declare
+	 */
 	constructor(options: RelationManagerOptions<T>) {
 		this.#database = options.database
 		this.#broad = options.database
 		this.#relations = options.relations ?? {}
+		this.#model = options.model
 		const declared = new Set(Object.keys(this.#broad.export()))
 		for (const [name, map] of Object.entries(this.#relations)) {
 			if (map === undefined) continue
@@ -76,13 +102,23 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 
 	// Construct a model over an opaque row type `R`, so `RowOf<T[K]>` is not
 	// expanded structurally here (the instantiation-depth guard `db.table` sidesteps).
+	// The `model` option's hooks and error handler reach each vended handle's own emitter.
 	#vend<R>(
 		name: string,
 		table: TableInterface<R>,
 		resolved: ReadonlyMap<string, ResolvedRelation>,
 		relations: RelationMap,
 	): ModelInterface<R> {
-		return new Model(name, table, resolved, relations, (model) => this.#context(model), this.#broad)
+		return new Model(
+			name,
+			table,
+			resolved,
+			relations,
+			(model) => this.#context(model),
+			this.#broad,
+			this.#model?.on,
+			this.#model?.error,
+		)
 	}
 
 	// Look up a related model's resolved relations + primary, for nested loading.

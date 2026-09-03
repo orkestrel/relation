@@ -1,6 +1,7 @@
 // The consumer-side guides-parity drop-in: runs `@orkestrel/guide`'s checks against
-// this repo's own `guides/README.md` manifest. The five constants below are this
-// package's own, and are the only part a sibling package changes.
+// this repo's own `guides/README.md` manifest. `FENCE_LANGUAGES`, `EXAMPLE_LANGUAGE`,
+// `MODULES`, `INTERNAL`, and `ROOT_FILES` are this package's own, and are the only part
+// a sibling package changes.
 
 import { describe, expect, it } from 'vitest'
 import {
@@ -18,8 +19,20 @@ import {
 	resolveLink,
 } from '@orkestrel/guide'
 import { readFileSync } from 'node:fs'
-import { requireValue } from '@orkestrel/test'
+import { captureError, readProperty, requireValue } from '@orkestrel/test'
 import { readInventory } from '@orkestrel/test/server'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
+import { stringShape } from '@orkestrel/contract'
+import {
+	belongsTo,
+	createRelationManager,
+	hasMany,
+	hasThrough,
+	isRelationDescriptor,
+	isRelationError,
+	resolveRelation,
+	resolveRelationMap,
+} from '@src/core'
 
 /** Every fence language this package's guides are allowed to use. */
 const FENCE_LANGUAGES = Object.freeze(['ts'])
@@ -32,8 +45,8 @@ const MODULES = Object.freeze({ '@orkestrel/relation': 'src/core', '@src/core': 
  *
  * A class that one-class-per-file evicted from its single consumer cannot become a
  * local, so it stays exported without being public. Naming it here is what makes that
- * intentional rather than forgotten — and the second assertion below fails when a name
- * here stops being stranded, so the list cannot rot.
+ * intentional rather than forgotten — and the `names no symbol internal that the barrel
+ * already exports` case fails when a name here stops being stranded, so the list cannot rot.
  */
 const INTERNAL: readonly string[] = Object.freeze([])
 
@@ -168,3 +181,68 @@ for (const entry of manifest) {
 		})
 	})
 }
+
+// The parity assertions in the manifest loop prove that every documented name resolves. They
+// cannot prove that a fence's `// value` comment is true, so each fence in `guides/relation.md`
+// that claims a value is transcribed here and its claim asserted against the real exports. The
+// block sits outside the loop because the loop registers once per manifest entry.
+describe('executable guide fences', () => {
+	it('resolves a builder descriptor onto the belongs arm', () => {
+		const resolved = resolveRelation(
+			'classification',
+			belongsTo('classificationId', 'classifications'),
+		)
+		expect(resolved.relationship).toBe('belongs')
+	})
+
+	it('resolves a relation map entry onto the many arm', () => {
+		const map = resolveRelationMap({ contacts: hasMany('accountId') })
+		expect(map.get('contacts')?.relationship).toBe('many')
+	})
+
+	it('narrows a builder descriptor to the object form', () => {
+		expect(isRelationDescriptor(belongsTo('classificationId'))).toBe(true)
+	})
+
+	it('carries through, source, and target as required members of the through arm', () => {
+		const resolved = resolveRelation('reps', hasThrough('accountReps', 'accountId', 'repId'))
+		expect(resolved).toEqual({
+			relationship: 'through',
+			name: 'reps',
+			model: 'reps',
+			through: 'accountReps',
+			source: 'accountId',
+			target: 'repId',
+		})
+	})
+
+	it('reports INVALID as the code a malformed relation throws', () => {
+		const error = captureError(() => resolveRelation('bad', {}))
+		expect(isRelationError(error)).toBe(true)
+		expect(readProperty(error, 'code')).toBe('INVALID')
+	})
+
+	it('lists the tables carrying relations and reports membership', () => {
+		const database = createDatabase({
+			driver: createMemoryDriver(),
+			tables: {
+				accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
+				contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
+				classifications: { id: stringShape(), label: stringShape() },
+			},
+		})
+		const manager = createRelationManager({
+			database,
+			relations: {
+				accounts: {
+					classification: belongsTo('classificationId', 'classifications'),
+					contacts: hasMany('accountId'),
+				},
+				contacts: { account: belongsTo('accountId', 'accounts') },
+			},
+		})
+		expect([...manager.names()].sort()).toEqual(['accounts', 'contacts'])
+		expect(manager.has('accounts')).toBe(true)
+		expect(manager.has('unrelated_table')).toBe(false)
+	})
+})
