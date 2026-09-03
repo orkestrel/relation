@@ -258,7 +258,7 @@ describe('Model — cancellation', () => {
 // threads its `model.on` and `model.error` options into every handle it vends. These pin:
 // `load` fires ONCE per relation (not per record — no N+1 in the events) with the attached
 // count; `link` / `unlink` carry the owning key + relation; the manager's `model` option seeds
-// a vended handle's listeners and receives their throws; and the emit-safety guarantee — a
+// a vended handle's listeners and receives their throws; and emit safety — a
 // throwing observer cannot corrupt the load result.
 
 // The ModelEventMap event names recorded across the emitter tests — fed to `createRecorders`
