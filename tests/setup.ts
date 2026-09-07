@@ -11,20 +11,20 @@ import { hasMany } from '@src/core'
 // a `users` / `posts` schema (matching the database module's own integration
 // fixtures) with a `users` → `posts` `many` relation.
 
-/** The shared `users` / `posts` shape maps for the cross-suite integration tests. */
+/** Holds the shared `users` / `posts` shape maps for the cross-suite integration tests. */
 export const INTEGRATION_TABLES = {
 	users: { id: stringShape(), name: stringShape(), age: integerShape() },
 	posts: { id: stringShape(), author: stringShape(), title: stringShape() },
 } as const
 
-/** The shared relation map over {@link INTEGRATION_TABLES} — `users` has many `posts`. */
+/** Holds the shared relation map over {@link INTEGRATION_TABLES} — `users` has many `posts`. */
 export const INTEGRATION_RELATIONS: RelationsShape<typeof INTEGRATION_TABLES> = {
 	users: { posts: hasMany('author') },
 }
 
 // ── Driver fault fixtures ─────────────────────────────────────────────────────
 
-/** A real driver boundary that injects one configured delete failure. */
+/** Injects one configured delete failure through a real driver boundary. */
 export class FaultDriver implements DriverInterface {
 	readonly #driver: DriverInterface
 	readonly #after: number
