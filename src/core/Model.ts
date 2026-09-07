@@ -29,7 +29,7 @@ import { countAttached, groupRows, indexRows, readColumn } from './helpers.js'
 import { RelationError } from './errors.js'
 
 /**
- * Pairs a typed table with relation-aware loading.
+ * Pairs a typed table with relation-aware `load` / `find` and junction management.
  *
  * @remarks
  * The model's own table is fully typed (`table`); related tables are reached by
@@ -45,10 +45,10 @@ import { RelationError } from './errors.js'
  *   eager-load + junction moments — `load` (a relation resolved: its name + the count of
  *   related rows attached across the whole record set), `link` / `unlink` (a junction row
  *   written) — for fire-and-forget observers. Every event is emitted directly, strictly
- *   AFTER the load resolves / the junction op completes; the emitter isolates a listener
- *   throw and routes it to its `error` handler (the `error` option), so a buggy observer can
- *   never corrupt the batched eager-load (no N+1 in the events either — one `load` per
- *   relation, not per record).
+ *   after the load resolves and after the junction operation completes; the emitter
+ *   isolates a listener throw and routes it to its `error` handler (the `error` option),
+ *   so a buggy observer can never corrupt the batched eager-load (no N+1 in the events
+ *   either — one `load` per relation, not per record).
  *
  * @example
  * ```ts

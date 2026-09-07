@@ -5,7 +5,8 @@ import type { RelationErrorCode } from './types.js'
 // (`.claude/rules/typescript.md` § Errors and outcomes).
 
 /**
- * Represents an error thrown by the relations layer.
+ * Represents an error thrown by the relations layer, carrying a machine-readable
+ * {@link RelationErrorCode}.
  *
  * @remarks
  * Thrown for: a relation value whose relationship cannot be inferred (`INVALID`), a

@@ -153,7 +153,7 @@ export function resolveRelationMap(relations: RelationMap): ReadonlyMap<string, 
 // === Row projection
 
 /**
- * Reads one column off any record.
+ * Reads one column off any record, whatever its declared type.
  *
  * @remarks
  * A base row's type is closed, so the column is read with `Reflect.get` rather than
@@ -259,7 +259,8 @@ export function groupRows(
 // === Builders
 
 /**
- * Builds a `belongs` relation — a foreign key on THIS table points at the related row.
+ * Builds a `belongs` relation — a foreign key on the owning table points at the related row
+ * (single).
  *
  * @param column - The FK column on this table
  * @param model - Target table name (defaults to the relation name)
@@ -275,7 +276,8 @@ export function belongsTo(column: string, model?: string): RelationDescriptor {
 }
 
 /**
- * Builds a `many` relation — a foreign key on the RELATED table points back here.
+ * Builds a `many` relation — a foreign key on the related table points back at the owning row
+ * (array).
  *
  * @param key - The FK column on the related table
  * @param model - Target table name (defaults to the relation name)
@@ -326,7 +328,8 @@ export function hasThrough(
 }
 
 /**
- * Builds a `morph` relation — a polymorphic FK plus a discriminator on the RELATED table.
+ * Builds a `morph` relation — a polymorphic foreign key plus a discriminator column on the
+ * related table (array).
  *
  * @param key - The FK column on the related table
  * @param tag - The discriminator column on the related table

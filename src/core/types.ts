@@ -83,7 +83,8 @@ export type RelationsShape<T extends TableMap = TableMap> = {
 }
 
 /**
- * Represents a `belongs` relation resolved at define-time — the foreign key sits on THIS table.
+ * Represents a `belongs` relation resolved at define-time — the foreign key sits on the owning
+ * table.
  *
  * @remarks
  * `column` is that foreign key; the related row is the one whose primary key it holds.
@@ -97,7 +98,7 @@ export interface ResolvedBelongs {
 }
 
 /**
- * Represents a `many` relation resolved at define-time — the foreign key sits on the RELATED
+ * Represents a `many` relation resolved at define-time — the foreign key sits on the related
  * table.
  *
  * @remarks
@@ -304,15 +305,71 @@ export interface ModelInterface<T = Row> {
 	readonly name: string
 	readonly table: TableInterface<T>
 	readonly relations: RelationMap
+	/**
+	 * Loads one record by key with the chosen relations populated, or a positional array of
+	 * records for an array of keys.
+	 *
+	 * @remarks
+	 * A key the table does not hold reads as `undefined`, and an array of keys keeps one slot
+	 * per key in the order given. Either form batches the relation queries over the whole
+	 * record set.
+	 *
+	 * @param key - The primary key to read
+	 * @param include - The relations to populate, and recursively their own
+	 * @param options - The database package's abort option
+	 * @returns The loaded record, or `undefined` when the key holds none
+	 */
 	load(key: Key, include: Include, options?: OperationOptions): Promise<Loaded<T> | undefined>
 	load(
 		keys: readonly Key[],
 		include: Include,
 		options?: OperationOptions,
 	): Promise<ReadonlyArray<Loaded<T> | undefined>>
+	/**
+	 * Finds many records, paged and sorted through {@link FindOptions}, with the chosen
+	 * relations populated.
+	 *
+	 * @param include - The relations to populate, and recursively their own
+	 * @param options - Pagination, ordering, and the abort signal
+	 * @returns The page's records, each carrying its populated relations
+	 */
 	find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>>
+	/**
+	 * Inserts a missing junction row for a `through` relation.
+	 *
+	 * @remarks
+	 * Idempotent for sequential calls: a pair the junction already holds writes nothing and
+	 * emits nothing. Concurrent calls for one pair may each insert.
+	 *
+	 * @param key - The owning record's primary key
+	 * @param relation - The `through` relation's name
+	 * @param target - The related record's primary key
+	 * @param options - The database package's abort option
+	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
+	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 */
 	link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
+	/**
+	 * Removes every matching junction row for a `through` relation inside one transaction.
+	 *
+	 * @param key - The owning record's primary key
+	 * @param relation - The `through` relation's name
+	 * @param target - The related record's primary key
+	 * @param options - The database package's abort option
+	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
+	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 */
 	unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
+	/**
+	 * Lists the related keys reachable through a `through` relation.
+	 *
+	 * @param key - The owning record's primary key
+	 * @param relation - The `through` relation's name
+	 * @param options - The database package's abort option
+	 * @returns The related keys the junction holds for that record
+	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
+	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 */
 	links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]>
 }
 
@@ -356,7 +413,29 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
  */
 export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number
+	/**
+	 * Returns the typed model for a declared table.
+	 *
+	 * @remarks
+	 * `name` is checked against the database's declared tables, so a typo is a compile error.
+	 * A declared table with no relation entry yields a relation-less model, still fully usable
+	 * for typed reads and writes through `table`.
+	 *
+	 * @param name - A declared table's name
+	 * @returns A model typed by that table's row
+	 */
 	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>>
+	/**
+	 * Lists the names of every model carrying resolved relations.
+	 *
+	 * @returns The table names the registry resolved a relation map for
+	 */
 	names(): readonly string[]
+	/**
+	 * Reports whether a model carries resolved relations.
+	 *
+	 * @param name - The table name to test
+	 * @returns True when the registry resolved a relation map for that table; false otherwise
+	 */
 	has(name: string): boolean
 }
