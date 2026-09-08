@@ -1,7 +1,7 @@
 # Relation
 
 > A small, declarative ORM layer over the `@orkestrel/database` tables: a table's
-> relations named once, then `load` / `find` records with their related rows already
+> relations named once, then records loaded or found with their related rows already
 > attached, batched so a direct relation costs one query across the whole record set and
 > a `through` relation two.
 
@@ -18,8 +18,8 @@ const manager = createRelationManager({
 	database: db, // a typed DatabaseInterface from createDatabase(...)
 	relations: {
 		accounts: {
-			classification: belongsTo('classificationId', 'classifications'), // FK on accounts → one classification
-			contacts: hasMany('accountId'), // FK on contacts → many contacts back here
+			classification: belongsTo('classificationId', 'classifications'), // foreign key on accounts → one classification
+			contacts: hasMany('accountId'), // foreign key on contacts → many contacts back here
 			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // many-to-many through a junction
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') }, // so contacts can nest-load its account
@@ -79,7 +79,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Types
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`.
+A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members it adds after.
 
 | Type                       | Kind      | Shape                                                                                | Summary                                                                                                                                                                               |
 | -------------------------- | --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -99,7 +99,7 @@ A `Shape` cell holds an interface's data members as bare names in braces, `?` ma
 | `Loaded`                   | type      | `T & Readonly<LoadedMap>`                                                            | Represents a row with its loaded relation properties attached.                                                                                                                        |
 | `LoadedMap`                | type      | `Record<string, Row \| readonly Row[] \| undefined>`                                 | Holds the relation properties attached to a `Loaded` row — each relation name mapped to its loaded related row(s), or `undefined` when a `belongs` / `one` relation misses.           |
 | `RelationContext`          | interface | `{ resolved, primary }`                                                              | Holds a related model's resolved relations and primary-key column, for nested loading.                                                                                                |
-| `FindOptions`              | interface | `{ limit?, offset?, sort?, direction?, signal? }`                                    | Configures pagination, ordering, and cancellation for `find`.                                                                                                                         |
+| `FindOptions`              | interface | `OperationOptions plus { limit?, offset?, sort?, direction? }`                       | Configures pagination, ordering, and cancellation for `find`.                                                                                                                         |
 | `ModelEventMap`            | type      | `{ load, link, unlink }`                                                             | Declares the push observation surface of a `ModelInterface` — the eager-load + junction-management moments a fire-and-forget observer (logging, metrics, a sync layer) subscribes to. |
 | `ModelInterface`           | interface | `{ emitter, name, table, relations } plus load, find, link, unlink, links`           | Represents a typed table paired with relation-aware loading and junction management.                                                                                                  |
 | `RelationManagerOptions`   | interface | `{ database, relations?, model? }`                                                   | Configures `createRelationManager`.                                                                                                                                                   |
@@ -113,13 +113,13 @@ The public methods of each behavioral interface — one table per type, keyed by
 
 `load` / `find` batch-load (one query for a direct relation, two for `through`, regardless of result size); `link` / `unlink` / `links` manage a `through` relation's junction rows. Every method accepts the database package's optional `OperationOptions` abort signal; `find` carries the same signal in `FindOptions`.
 
-| Method   | Returns                                      | Summary                                                                                                             |
-| -------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `load`   | `Promise<Loaded<T> \| undefined>` (or array) | Loads one record by key with the chosen relations populated, or a positional array of records for an array of keys. |
-| `find`   | `Promise<readonly Loaded<T>[]>`              | Finds many records, paged and sorted through `FindOptions`, with the chosen relations populated.                    |
-| `link`   | `Promise<void>`                              | Inserts a missing junction row for a `through` relation.                                                            |
-| `unlink` | `Promise<void>`                              | Removes every matching junction row for a `through` relation inside one transaction.                                |
-| `links`  | `Promise<readonly Key[]>`                    | Lists the related keys reachable through a `through` relation.                                                      |
+| Method   | Returns                           | Summary                                                                                                             |
+| -------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `load`   | `Promise<Loaded<T> \| undefined>` | Loads one record by key with the chosen relations populated, or a positional array of records for an array of keys. |
+| `find`   | `Promise<readonly Loaded<T>[]>`   | Finds many records, paged and sorted through `FindOptions`, with the chosen relations populated.                    |
+| `link`   | `Promise<void>`                   | Inserts a missing junction row for a `through` relation.                                                            |
+| `unlink` | `Promise<void>`                   | Removes every matching junction row for a `through` relation inside one transaction.                                |
+| `links`  | `Promise<readonly Key[]>`         | Lists the related keys reachable through a `through` relation.                                                      |
 
 #### `RelationManagerInterface`
 
@@ -150,6 +150,9 @@ Typing each loaded relation property to its exact target row (Prisma-style) is a
 
 ### Defining relations
 
+Declare every relationship with its builder, then load a record with the chosen relations
+attached:
+
 ```ts
 import {
 	createRelationManager,
@@ -164,9 +167,9 @@ const manager = createRelationManager({
 	database: db,
 	relations: {
 		accounts: {
-			classification: belongsTo('classificationId', 'classifications'), // FK on accounts
-			contacts: hasMany('accountId'), // FK on contacts → accounts
-			profile: hasOne('accountId', 'profiles'), // single, FK on profiles
+			classification: belongsTo('classificationId', 'classifications'), // foreign key on accounts
+			contacts: hasMany('accountId'), // foreign key on contacts → accounts
+			profile: hasOne('accountId', 'profiles'), // single, foreign key on profiles
 			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // through a junction
 			notes: hasMorph('entityId', 'entityType', 'account', 'notes'), // polymorphic
 		},
@@ -187,13 +190,13 @@ Reach for the builders for everything else: they set an explicit `relationship`,
 
 The relationships, and where each foreign key lives:
 
-| Relationship | Builder      | FK location        | Returns               |
-| ------------ | ------------ | ------------------ | --------------------- |
-| `belongs`    | `belongsTo`  | the owning table   | single or `undefined` |
-| `many`       | `hasMany`    | the related table  | array                 |
-| `one`        | `hasOne`     | the related table  | single or `undefined` |
-| `through`    | `hasThrough` | the junction table | array                 |
-| `morph`      | `hasMorph`   | the related table  | array                 |
+| Relationship | Builder      | Foreign key location | Returns               |
+| ------------ | ------------ | -------------------- | --------------------- |
+| `belongs`    | `belongsTo`  | the owning table     | single or `undefined` |
+| `many`       | `hasMany`    | the related table    | array                 |
+| `one`        | `hasOne`     | the related table    | single or `undefined` |
+| `through`    | `hasThrough` | the junction table   | array                 |
+| `morph`      | `hasMorph`   | the related table    | array                 |
 
 ### Resolving relations directly
 

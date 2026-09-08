@@ -20,11 +20,11 @@ import { RelationError } from './errors.js'
  * Resolves one raw {@link Relation} value into a flat {@link ResolvedRelation}.
  *
  * @remarks
- * A `string` is a `belongs` (FK column on this table); a `readonly string[]` is a
- * `many` (FK column on the related table); a {@link RelationDescriptor} uses its
- * explicit `relationship`, or infers it from the fields present. The target model
- * defaults to the relation name. Every column the resolved arm declares is validated
- * here, which is what lets each arm declare its columns required.
+ * A `string` is a `belongs` (foreign-key column on this table); a `readonly string[]`
+ * is a `many` (foreign-key column on the related table); a {@link RelationDescriptor}
+ * uses its explicit `relationship`, or infers it from the fields present. The target
+ * model defaults to the relation name. Every column the resolved arm declares is
+ * validated here, which is what lets each arm declare its columns required.
  *
  * @param name - The relation name (its key in the {@link RelationMap})
  * @param value - The raw relation value
@@ -262,7 +262,7 @@ export function groupRows(
  * Builds a `belongs` relation — a foreign key on the owning table points at the related row
  * (single).
  *
- * @param column - The FK column on this table
+ * @param column - The foreign-key column on this table
  * @param model - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *
@@ -279,7 +279,7 @@ export function belongsTo(column: string, model?: string): RelationDescriptor {
  * Builds a `many` relation — a foreign key on the related table points back at the owning row
  * (array).
  *
- * @param key - The FK column on the related table
+ * @param key - The foreign-key column on the related table
  * @param model - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  */
@@ -290,7 +290,7 @@ export function hasMany(key: string, model?: string): RelationDescriptor {
 /**
  * Builds a `one` relation — like {@link hasMany}, but a single related row.
  *
- * @param key - The FK column on the related table
+ * @param key - The foreign-key column on the related table
  * @param model - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  */
@@ -302,8 +302,8 @@ export function hasOne(key: string, model?: string): RelationDescriptor {
  * Builds a `through` relation — a junction table links the two sides (many-to-many).
  *
  * @param through - The junction table name
- * @param source - The junction FK column pointing at THIS model
- * @param target - The junction FK column pointing at the related model
+ * @param source - The junction foreign-key column pointing at the owning model
+ * @param target - The junction foreign-key column pointing at the related model
  * @param model - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *
@@ -331,9 +331,9 @@ export function hasThrough(
  * Builds a `morph` relation — a polymorphic foreign key plus a discriminator column on the
  * related table (array).
  *
- * @param key - The FK column on the related table
+ * @param key - The foreign-key column on the related table
  * @param tag - The discriminator column on the related table
- * @param label - The discriminator value identifying THIS model
+ * @param label - The discriminator value identifying the owning model
  * @param model - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *

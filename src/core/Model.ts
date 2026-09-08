@@ -74,7 +74,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	readonly #relations: RelationMap
 	readonly #lookup: (model: string) => RelationContext | undefined
 	readonly #database: DatabaseInterface
-	// The PUSH observation surface — owned, never inherited. The emitter isolates a
+	// The push observation surface — owned, never inherited. The emitter isolates a
 	// listener throw (routing it to the `error` handler), so it can never escape into the
 	// batched eager-load.
 	readonly #emitter: Emitter<ModelEventMap>
@@ -215,8 +215,8 @@ export class Model<T = Row> implements ModelInterface<T> {
 		)
 		if (existing > 0) return
 		await junction.set({ [resolved.source]: key, [resolved.target]: target }, options)
-		// Observe the inserted junction row — AFTER the driver write, so a swallowed listener
-		// throw can't perturb the link (carries the owning key + the relation name).
+		// Observe the inserted junction row — strictly after the driver write, so a swallowed
+		// listener throw can't perturb the link (carries the owning key + the relation name).
 		this.#emitter.emit('link', key, relation)
 	}
 
@@ -322,9 +322,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 				const target = props[index]
 				if (target !== undefined) target[resolved.name] = value
 			})
-			// Observe this relation's eager-load — AFTER it resolved + was attached, ONCE per
-			// relation (not per record — the batched load has no N+1, nor do its events),
-			// carrying the relation name + the total related rows attached across the set.
+			// Observe this relation's eager-load — strictly after it resolved + was attached,
+			// once per relation (not per record — the batched load has no N+1, nor do its
+			// events), carrying the relation name + the count of rows attached across the set.
 			this.#emitter.emit('load', resolved.name, countAttached(values))
 		}
 		return props

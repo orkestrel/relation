@@ -1,7 +1,7 @@
 # @orkestrel/relation
 
 > A small, declarative ORM layer over the `@orkestrel/database` tables: a table's
-> relations named once, then `load` / `find` records with their related rows already
+> relations named once, then records loaded or found with their related rows already
 > attached, batched so a direct relation costs one query across the whole record set and
 > a `through` relation two.
 
@@ -42,8 +42,8 @@ const manager = createRelationManager({
 	database: db,
 	relations: {
 		accounts: {
-			classification: belongsTo('classificationId', 'classifications'), // FK on accounts
-			contacts: hasMany('accountId'), // FK on contacts → back here
+			classification: belongsTo('classificationId', 'classifications'), // foreign key on accounts
+			contacts: hasMany('accountId'), // foreign key on contacts → back here
 		},
 		contacts: { account: belongsTo('accountId', 'accounts') },
 	},

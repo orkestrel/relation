@@ -29,9 +29,9 @@ import { RelationManager } from './RelationManager.js'
  * 	database: db,
  * 	relations: {
  * 		accounts: {
- * 			classification: belongsTo('classificationId', 'classifications'), // FK on accounts
- * 			contacts: hasMany('accountId'), // FK on contacts → accounts
- * 			profile: hasOne('accountId', 'profiles'), // single, FK on profiles
+ * 			classification: belongsTo('classificationId', 'classifications'), // foreign key on accounts
+ * 			contacts: hasMany('accountId'), // foreign key on contacts → accounts
+ * 			profile: hasOne('accountId', 'profiles'), // single, foreign key on profiles
  * 			representatives: hasThrough('accountReps', 'accountId', 'repId', 'representatives'), // through a junction
  * 			notes: hasMorph('entityId', 'entityType', 'account', 'notes'), // polymorphic
  * 		},

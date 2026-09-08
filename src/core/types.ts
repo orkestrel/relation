@@ -23,11 +23,11 @@ import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkes
  * Enumerates the relationships a relation can declare.
  *
  * @remarks
- * `belongs` — a foreign key on THIS table points at the related row (single).
- * `many` — a foreign key on the RELATED table points back here (array).
+ * `belongs` — a foreign key on the owning table points at the related row (single).
+ * `many` — a foreign key on the related table points back here (array).
  * `one` — like `many`, but a single related row.
  * `through` — a junction table links the two sides (array, many-to-many).
- * `morph` — a foreign key plus a discriminator column on the RELATED table (array, polymorphic).
+ * `morph` — a foreign key plus a discriminator column on the related table (array, polymorphic).
  */
 export type Relationship = 'belongs' | 'many' | 'one' | 'through' | 'morph'
 
@@ -59,9 +59,9 @@ export interface RelationDescriptor {
  * Represents a single relation definition.
  *
  * @remarks
- * A `string` is a `belongs` (the FK column on this table); a `readonly string[]`
- * is a `many` (the first element is the FK column on the related table); a
- * {@link RelationDescriptor} is the object form for everything else.
+ * A `string` is a `belongs` (the foreign-key column on this table); a `readonly
+ * string[]` is a `many` (the first element is the foreign-key column on the related
+ * table); a {@link RelationDescriptor} is the object form for everything else.
  */
 export type Relation = string | readonly string[] | RelationDescriptor
 
@@ -132,9 +132,9 @@ export interface ResolvedOne {
  * sides.
  *
  * @remarks
- * `through` is the junction table, `source` its foreign-key column pointing at THIS
- * model, and `target` its foreign-key column pointing at the related model. These are
- * the columns `link` / `unlink` / `links` write and read.
+ * `through` is the junction table, `source` its foreign-key column pointing at the
+ * owning model, and `target` its foreign-key column pointing at the related model.
+ * These are the columns `link` / `unlink` / `links` write and read.
  */
 export interface ResolvedThrough {
 	readonly relationship: 'through'
@@ -151,7 +151,7 @@ export interface ResolvedThrough {
  *
  * @remarks
  * `key` is the foreign key on the related table, `tag` the discriminator column beside
- * it, and `label` the discriminator value identifying THIS model.
+ * it, and `label` the discriminator value identifying the owning model.
  */
 export interface ResolvedMorph {
 	readonly relationship: 'morph'
@@ -251,14 +251,15 @@ export interface FindOptions extends OperationOptions {
  * a sync layer) subscribes to.
  *
  * @remarks
- * `load` fires once per relation that an eager-load resolves, carrying the relation NAME +
- * the COUNT of related rows attached for the whole record set (it is the batched load
+ * `load` fires once per relation that an eager-load resolves, carrying the relation name +
+ * the count of related rows attached for the whole record set (it is the batched load
  * moment, not one event per record — there is no N+1 in the events either). `link` /
  * `unlink` fire after a junction row is inserted / removed, carrying the owning key + the
  * relation name. Listener isolation is the emitter's: every event is emitted
  * directly and a listener throw is routed to the emitter's `error` handler (the `error`
- * option), never onto this map, and sits AFTER the load resolves / the junction op completes
- * — so a throwing observer can never corrupt the eager-load batching or a junction write.
+ * option), never onto this map, and sits strictly after the load resolves / the junction op
+ * completes — so a throwing observer can never corrupt the eager-load batching or a
+ * junction write.
  * `RelationManager` is event-free by design (a stateless
  * registry that merely vends models — it has no observable lifecycle of its own); the
  * per-entity {@link ModelInterface} is where loading and linking happen, so the emitter
