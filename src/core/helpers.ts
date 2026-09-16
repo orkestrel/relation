@@ -6,7 +6,7 @@ import type {
 	ResolvedRelation,
 } from './types.js'
 import type { Row } from '@orkestrel/database'
-import { isArray, isDefined, isString } from '@orkestrel/contract'
+import { isArray, isDefined, isObject, isString } from '@orkestrel/contract'
 import { isRelationDescriptor } from './validators.js'
 import { RelationError } from './errors.js'
 
@@ -169,7 +169,7 @@ export function resolveRelationMap(relations: RelationMap): ReadonlyMap<string, 
  * ```
  */
 export function readColumn(record: unknown, column: string): unknown {
-	if (typeof record !== 'object' || record === null) return undefined
+	if (!isObject(record)) return undefined
 	return Reflect.get(record, column)
 }
 

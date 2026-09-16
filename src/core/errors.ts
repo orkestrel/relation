@@ -1,4 +1,5 @@
 import type { RelationErrorCode } from './types.js'
+import { isInstance } from '@orkestrel/contract'
 
 // Invalid relation definitions and misuse `throw` a `RelationError` carrying a
 // machine-readable `code`, so a `catch` branches on `error.code`
@@ -38,5 +39,5 @@ export class RelationError extends Error {
  * @returns True if `value` is a {@link RelationError}; false otherwise
  */
 export function isRelationError(value: unknown): value is RelationError {
-	return value instanceof RelationError
+	return isInstance(value, RelationError)
 }

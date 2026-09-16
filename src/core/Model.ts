@@ -24,7 +24,7 @@ import type {
 } from './types.js'
 import { checkAbort, extractKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
-import { isArray, isDefined } from '@orkestrel/contract'
+import { isArray, isBoolean, isDefined } from '@orkestrel/contract'
 import { countAttached, groupRows, indexRows, readColumn } from './helpers.js'
 import { RelationError } from './errors.js'
 
@@ -510,7 +510,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		sub: boolean | Include,
 		options?: OperationOptions,
 	): Promise<readonly Row[]> {
-		if (typeof sub === 'boolean' || rows.length === 0) return rows
+		if (isBoolean(sub) || rows.length === 0) return rows
 		const context = this.#lookup(model)
 		if (context === undefined) return rows
 		const props = await this.#populate(rows, sub, context.resolved, context.primary, options)

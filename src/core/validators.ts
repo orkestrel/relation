@@ -1,5 +1,5 @@
 import type { RelationDescriptor } from './types.js'
-import { isRecord, isString } from '@orkestrel/contract'
+import { isRecord, isString, literalOf } from '@orkestrel/contract'
 
 // === Descriptor guard
 
@@ -30,11 +30,7 @@ export function isRelationDescriptor(value: unknown): value is RelationDescripto
 	if (!isRecord(value)) return false
 	if (
 		'relationship' in value &&
-		value.relationship !== 'belongs' &&
-		value.relationship !== 'many' &&
-		value.relationship !== 'one' &&
-		value.relationship !== 'through' &&
-		value.relationship !== 'morph'
+		!literalOf('belongs', 'many', 'one', 'through', 'morph')(value.relationship)
 	) {
 		return false
 	}
