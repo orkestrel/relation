@@ -1,4 +1,4 @@
-import { belongsTo, createRelationManager, hasMany, hasThrough } from '@src/core'
+import { belongsTo, createRelationManager, hasThrough } from '@src/core'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { stringShape } from '@orkestrel/contract'
 import { describe, expect, it } from 'vitest'
@@ -7,31 +7,11 @@ import { describe, expect, it } from 'vitest'
 // the typed `model(name)` accessor. Relation loading, nested includes, and
 // through management are `Model`'s own surface and live in Model.test.ts.
 
-async function setup() {
-	const db = createDatabase({
-		driver: createMemoryDriver(),
-		tables: {
-			accounts: { id: stringShape(), name: stringShape() },
-			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
-		},
-	})
-	await db.table('accounts').set({ id: 'acc1', name: 'Acme' })
-	await db.table('accounts').set({ id: 'acc2', name: 'Beta' })
-	await db.table('contacts').set({ id: 'con1', accountId: 'acc1', email: 'a@x.com' })
-
-	const manager = createRelationManager({
-		database: db,
-		relations: {
-			accounts: { contacts: hasMany('accountId') },
-			contacts: { account: belongsTo('accountId', 'accounts') },
-		},
-	})
-	return { db, manager }
-}
+import { createManagerFixture } from '../../setup.js'
 
 describe('RelationManager — registry', () => {
 	it('tracks the defined models', async () => {
-		const { manager } = await setup()
+		const { manager } = await createManagerFixture()
 		expect(manager.count).toBe(2)
 		expect([...manager.names()].sort()).toEqual(['accounts', 'contacts'])
 		expect(manager.has('accounts')).toBe(true)
@@ -94,7 +74,7 @@ describe('RelationManager — validation', () => {
 
 describe('RelationManager — model() accessor', () => {
 	it('vends a model over the table, typed by that table and named for it', async () => {
-		const { manager } = await setup()
+		const { manager } = await createManagerFixture()
 		const accounts = manager.model('accounts')
 		expect(accounts.name).toBe('accounts')
 		// The model's table is the fully typed underlying table.

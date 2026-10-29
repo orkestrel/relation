@@ -1,8 +1,13 @@
-import type { Row, TableSchema } from '@orkestrel/database'
+import type { Row } from '@orkestrel/database'
 import { compileGuard } from '@orkestrel/contract'
-import { createMemoryDriver, shapeToColumnStorage } from '@orkestrel/database'
+import { shapeToColumnStorage } from '@orkestrel/database'
 import { describe, expect, it } from 'vitest'
-import { FaultDriver, INTEGRATION_RELATIONS, INTEGRATION_TABLES } from './setup.js'
+import {
+	FaultDriver,
+	INTEGRATION_RELATIONS,
+	INTEGRATION_TABLES,
+	openFixtureDriver,
+} from './setup.js'
 
 // The base test setup module's proof (`tests/setup.ts`). Its subject is the exported test
 // infrastructure the workspace's suites rely on — the fixture shape maps and the
@@ -14,28 +19,6 @@ import { FaultDriver, INTEGRATION_RELATIONS, INTEGRATION_TABLES } from './setup.
 // is read back through the compiled guard rather than through the shape builder that
 // declared it, and every driver assertion reads the WRAPPED driver directly so nothing the
 // wrapper holds itself can satisfy it.
-
-/** Derive the real driver schema the fixture table map declares. */
-function buildFixtureSchema(): readonly TableSchema[] {
-	return Object.entries(INTEGRATION_TABLES).map(([name, columns]) => ({
-		name,
-		primary: 'id',
-		columns: Object.entries(columns).map(([column, shape]) => ({
-			name: column,
-			storage: shapeToColumnStorage(shape),
-			optional: false,
-			nullable: false,
-		})),
-		indexes: [],
-	}))
-}
-
-/** Open a real memory driver over the fixture schema. */
-async function openFixtureDriver() {
-	const driver = createMemoryDriver()
-	await driver.open(buildFixtureSchema())
-	return driver
-}
 
 describe('INTEGRATION_TABLES', () => {
 	it('admits the fixture row values the consuming suites write', () => {

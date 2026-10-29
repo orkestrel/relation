@@ -154,9 +154,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 				this.#table.primary,
 				options,
 			)
-			let next = 0
+			const attachments = props.values()
 			return bases.map((base) =>
-				base === undefined ? undefined : Object.assign({}, base, props[next++]),
+				base === undefined ? undefined : Object.assign({}, base, attachments.next().value),
 			)
 		}
 		const base = await this.#table.get(keys)

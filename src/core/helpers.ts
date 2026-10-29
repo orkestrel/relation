@@ -57,18 +57,19 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 
 	const model = value.model ?? name
 	// Inferred from the fields present when no explicit `relationship` is set.
-	let relationship: Relationship
-	if (value.relationship !== undefined) {
-		relationship = value.relationship
-	} else if (isDefined(value.through)) {
-		relationship = 'through'
-	} else if (isDefined(value.tag)) {
-		relationship = 'morph'
-	} else if (isDefined(value.column)) {
-		relationship = 'belongs'
-	} else if (isDefined(value.key)) {
-		relationship = 'one'
-	} else {
+	const relationship: Relationship | undefined =
+		value.relationship !== undefined
+			? value.relationship
+			: isDefined(value.through)
+				? 'through'
+				: isDefined(value.tag)
+					? 'morph'
+					: isDefined(value.column)
+						? 'belongs'
+						: isDefined(value.key)
+							? 'one'
+							: undefined
+	if (relationship === undefined) {
 		throw new RelationError(
 			'INVALID',
 			`Relation '${name}': cannot infer relationship from descriptor`,
@@ -143,11 +144,9 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
  * @returns A map keyed by relation name
  */
 export function resolveRelationMap(relations: RelationMap): ReadonlyMap<string, ResolvedRelation> {
-	const resolved = new Map<string, ResolvedRelation>()
-	for (const [name, value] of Object.entries(relations)) {
-		resolved.set(name, resolveRelation(name, value))
-	}
-	return resolved
+	return new Map(
+		Object.entries(relations).map(([name, value]) => [name, resolveRelation(name, value)]),
+	)
 }
 
 // === Row projection
@@ -190,12 +189,10 @@ export function readColumn(record: unknown, column: string): unknown {
  * ```
  */
 export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undefined>): number {
-	let total = 0
-	for (const value of values) {
-		if (isArray(value)) total += value.length
-		else if (value !== undefined) total += 1
-	}
-	return total
+	return Iterator.from(values).reduce(
+		(total, value) => total + (isArray(value) ? value.length : value === undefined ? 0 : 1),
+		0,
+	)
 }
 
 /**
@@ -218,9 +215,7 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
  * ```
  */
 export function indexRows(rows: readonly Row[], column: string): ReadonlyMap<string, Row> {
-	const index = new Map<string, Row>()
-	for (const row of rows) index.set(String(readColumn(row, column)), row)
-	return index
+	return new Map(Iterator.from(rows).map((row) => [String(readColumn(row, column)), row]))
 }
 
 /**

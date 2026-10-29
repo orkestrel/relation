@@ -1,5 +1,5 @@
 import type { RelationErrorCode } from './types.js'
-import { isInstance } from '@orkestrel/contract'
+import { holds, INTRINSICS, isObject } from '@orkestrel/contract'
 
 // Invalid relation definitions and misuse `throw` a `RelationError` carrying a
 // machine-readable `code`, so a `catch` branches on `error.code`
@@ -26,6 +26,7 @@ export class RelationError extends Error {
 		context?: Readonly<Record<string, unknown>>,
 	) {
 		super(message)
+		INTRINSICS.define(this, Symbol.for('@orkestrel/relation.RelationError'), { value: this })
 		this.name = 'RelationError'
 		this.code = code
 		if (context !== undefined) this.context = context
@@ -36,8 +37,16 @@ export class RelationError extends Error {
  * Narrows an unknown caught value to a {@link RelationError}.
  *
  * @param value - The value to test (typically a `catch` binding)
- * @returns True if `value` is a {@link RelationError}; false otherwise
+ * @returns True if the error carries its own identity brand and declared members; false otherwise
  */
 export function isRelationError(value: unknown): value is RelationError {
-	return isInstance(value, RelationError)
+	return holds(() => {
+		if (!(value instanceof Error) || INTRINSICS.prototype(value) === Error.prototype) return false
+		const brand = INTRINSICS.describe(value, Symbol.for('@orkestrel/relation.RelationError'))
+		if (brand?.value !== value) return false
+		const code: unknown = INTRINSICS.reflect.read(value, 'code')
+		if (code !== 'INVALID' && code !== 'UNKNOWN_RELATION' && code !== 'NOT_THROUGH') return false
+		const context: unknown = INTRINSICS.reflect.read(value, 'context')
+		return context === undefined || isObject(context)
+	})
 }
