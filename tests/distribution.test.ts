@@ -799,6 +799,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 const require = createRequire(import.meta.url)
 const copies = [await import('@orkestrel/relation'), require('@orkestrel/relation'), await import(pathToFileURL(process.argv[2]).href)]
+assert.equal(new Set(copies.map((entry) => entry.RelationError)).size, copies.length)
 for (const producer of copies) {
 	const error = new producer.RelationError('INVALID', 'failure', { pass: 'gate' })
 	class Derived extends producer.RelationError {

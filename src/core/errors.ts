@@ -1,5 +1,5 @@
 import type { RelationErrorCode } from './types.js'
-import { holds, INTRINSICS, isObject } from '@orkestrel/contract'
+import { holds, INTRINSICS, isFunction, isObject } from '@orkestrel/contract'
 
 // Invalid relation definitions and misuse `throw` a `RelationError` carrying a
 // machine-readable `code`, so a `catch` branches on `error.code`
@@ -47,6 +47,6 @@ export function isRelationError(value: unknown): value is RelationError {
 		const code: unknown = INTRINSICS.reflect.read(value, 'code')
 		if (code !== 'INVALID' && code !== 'UNKNOWN_RELATION' && code !== 'NOT_THROUGH') return false
 		const context: unknown = INTRINSICS.reflect.read(value, 'context')
-		return context === undefined || isObject(context)
+		return context === undefined || isObject(context) || isFunction(context)
 	})
 }
