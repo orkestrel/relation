@@ -37,7 +37,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Factory & manager
 
-| API                     | Kind     | Summary                                                                                                 |
+| Name                    | Kind     | Summary                                                                                                 |
 | ----------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
 | `createRelationManager` | function | Creates a `RelationManagerInterface` over a database and its relation map.                              |
 | `RelationManager`       | class    | Resolves a `RelationsShape` once at construction and vends a typed `ModelInterface` per declared table. |
@@ -45,7 +45,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Builders
 
-| API          | Kind     | Summary                                                                                                         |
+| Name         | Kind     | Summary                                                                                                         |
 | ------------ | -------- | --------------------------------------------------------------------------------------------------------------- |
 | `belongsTo`  | function | Builds a `belongs` relation — a foreign key on the owning table points at the related row (single).             |
 | `hasMany`    | function | Builds a `many` relation — a foreign key on the related table points back at the owning row (array).            |
@@ -55,7 +55,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Resolution
 
-| API                    | Kind     | Summary                                                                       |
+| Name                   | Kind     | Summary                                                                       |
 | ---------------------- | -------- | ----------------------------------------------------------------------------- |
 | `resolveRelation`      | function | Resolves one raw `Relation` value into a flat `ResolvedRelation`.             |
 | `resolveRelationMap`   | function | Resolves every entry of a `RelationMap` into a name → `ResolvedRelation` map. |
@@ -63,7 +63,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Row helpers
 
-| API             | Kind     | Summary                                                                |
+| Name            | Kind     | Summary                                                                |
 | --------------- | -------- | ---------------------------------------------------------------------- |
 | `readColumn`    | function | Reads one column off any record, whatever its declared type.           |
 | `countAttached` | function | Counts the related rows one relation attached across a record set.     |
@@ -72,7 +72,7 @@ acme?.contacts // the relation property — broad (Row | readonly Row[] | undefi
 
 ### Errors
 
-| API               | Kind     | Summary                                                                                             |
+| Name              | Kind     | Summary                                                                                             |
 | ----------------- | -------- | --------------------------------------------------------------------------------------------------- |
 | `RelationError`   | class    | Represents an error thrown by the relations layer, carrying a machine-readable `RelationErrorCode`. |
 | `isRelationError` | function | Narrows an unknown caught value to a `RelationError`.                                               |
@@ -85,7 +85,7 @@ transparent proxies, unbranded look-alikes, and plain branded objects.
 
 A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members it adds after.
 
-| Type                       | Kind      | Shape                                                                                | Summary                                                                                                                                                                               |
+| Name                       | Kind      | Shape                                                                                | Summary                                                                                                                                                                               |
 | -------------------------- | --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Relationship`             | type      | `'belongs' \| 'many' \| 'one' \| 'through' \| 'morph'`                               | Enumerates the relationships a relation can declare.                                                                                                                                  |
 | `RelationDescriptor`       | interface | `{ relationship?, column?, key?, through?, source?, target?, tag?, label?, model? }` | Represents the object form of a relation.                                                                                                                                             |
