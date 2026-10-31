@@ -83,8 +83,6 @@ The error guard recognizes the error's own identity brand across package copies 
 module formats. It accepts subclasses regardless of their `name` and refuses
 transparent proxies, unbranded look-alikes, and plain branded objects.
 
-A `Shape` cell holds an interface's data members as bare names in braces, `?` marking an optional member and `plus` introducing its call-signature members, and a type alias's own type literal with a union's arms escaped as `\|`. An extended interface's name comes before `plus`, with the members it adds after.
-
 | Name                       | Kind      | Signature                                                                                                                                                                  | Summary                                                                                                                                                                               |
 | -------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Relationship`             | type      | `'belongs' \| 'many' \| 'one' \| 'through' \| 'morph'`                                                                                                                     | Enumerates the relationships a relation can declare.                                                                                                                                  |
