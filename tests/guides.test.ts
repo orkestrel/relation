@@ -35,7 +35,7 @@ await new GuideCommand({
 	reader: readInventory,
 	runner: createVitest,
 }).execute(async ({ files, report, rows }) => {
-	const { isRecord, parseJSON, stringShape } = await import('@orkestrel/contract')
+	const { isArray, isRecord, parseJSON, stringShape } = await import('@orkestrel/contract')
 	const {
 		computeSymbolKey,
 		createSourceManager,
@@ -59,6 +59,7 @@ await new GuideCommand({
 		resolveRelationMap,
 	} = await import('@src/core')
 	const { describe, expect, it } = await import('vitest')
+	const { MODEL_TABLES } = await import('./setup.js')
 	const sources = createSourceManager({ files, modules: MODULES })
 	const own = requireValue(
 		rows.find((row) => row.entry.spec === GUIDE_SPEC),
@@ -225,6 +226,24 @@ await new GuideCommand({
 	// that claims a value is transcribed here and its claim asserted against the real exports. The
 	// block sits outside the loop because the loop registers once per manifest entry.
 	describe('executable guide fences', () => {
+		it('T9 constructs a transaction manager and reads its own related writes', async () => {
+			const TABLES = {
+				accounts: { id: stringShape(), name: stringShape() },
+				contacts: { id: stringShape(), accountId: stringShape() },
+			}
+			const database = createDatabase({ driver: createMemoryDriver(), tables: TABLES })
+			const count = await database.transaction(async (storage) => {
+				const manager = createRelationManager({
+					storage,
+					relations: { accounts: { contacts: hasMany('accountId') } },
+				})
+				await manager.model('accounts').table.set({ id: 'a1', name: 'Acme' })
+				await storage.table('contacts').set({ id: 'c1', accountId: 'a1' })
+				const account = await manager.model('accounts').load('a1', { contacts: true })
+				return isArray(account?.contacts) ? account.contacts.length : 0
+			})
+			expect(count).toBe(1)
+		})
 		it('resolves a builder descriptor onto the belongs arm', () => {
 			const resolved = resolveRelation(
 				'classification',
@@ -263,14 +282,10 @@ await new GuideCommand({
 		it('lists the tables carrying relations and reports membership', () => {
 			const database = createDatabase({
 				driver: createMemoryDriver(),
-				tables: {
-					accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
-					contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
-					classifications: { id: stringShape(), label: stringShape() },
-				},
+				tables: MODEL_TABLES,
 			})
-			const manager = createRelationManager({
-				database,
+			const manager = createRelationManager<typeof MODEL_TABLES>({
+				storage: database,
 				relations: {
 					accounts: {
 						classification: belongsTo('classificationId', 'classifications'),

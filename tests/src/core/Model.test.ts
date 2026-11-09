@@ -1,8 +1,79 @@
 import type { ModelEventMap } from '@src/core'
+import type { MODEL_TABLES } from '../../setup.js'
 import { createMemoryDriver, isDatabaseError } from '@orkestrel/database'
+import { belongsTo, createRelationManager, hasMany, hasMorph, hasThrough } from '@src/core'
 import { describe, expect, it } from 'vitest'
 import { createRecorder, createRecorders } from '@orkestrel/test'
-import { FaultDriver, one, rows, setup, throwLoadObserver } from '../../setup.js'
+import {
+	FaultDriver,
+	STORAGE_RELATIONS,
+	createStorageFixture,
+	one,
+	rows,
+	setup,
+	throwLoadObserver,
+} from '../../setup.js'
+
+describe('Model — transaction storage', () => {
+	it('T2 commits nested reads, custom-primary targets, links, and duplicate unlink', async () => {
+		const db = await createStorageFixture()
+		const events = createRecorder<[key: string | number, relation: string]>()
+		await db.transaction(async (storage) => {
+			const accounts = createRelationManager({
+				storage,
+				relations: STORAGE_RELATIONS,
+				model: { on: { unlink: events.handler } },
+			}).model('accounts')
+			await accounts.table.set({ code: 'a1', name: 'Acme' })
+			await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
+			const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
+			expect(one(rows(loaded?.contacts)[0]?.account).name).toBe('Acme')
+			expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1', 'r1'])
+			await accounts.link('a1', 'reps', 'r2')
+			await accounts.unlink('a1', 'reps', 'r1')
+			expect(await accounts.links('a1', 'reps')).toEqual(['r2'])
+			expect(events.calls).toEqual([['a1', 'reps']])
+		})
+		expect(await db.table('accounts').get('a1')).toEqual({ code: 'a1', name: 'Acme' })
+		expect(await db.table('contacts').get('c1')).toEqual({ id: 'c1', accountCode: 'a1' })
+		expect(
+			(await db.table('junction').records()).map((row) => [row.accountCode, row.repCode]).sort(),
+		).toEqual([
+			['a0', 'r2'],
+			['a1', 'r2'],
+		])
+	})
+
+	it('T3 emits in scope before a later failure restores all tables', async () => {
+		const db = await createStorageFixture()
+		const original = await db.table('junction').records()
+		const fault = new Error('outer failure')
+		const events = createRecorder<[key: string | number, relation: string]>()
+		await expect(
+			db.transaction(async (storage) => {
+				const accounts = createRelationManager({
+					storage,
+					relations: STORAGE_RELATIONS,
+					model: { on: { unlink: events.handler } },
+				}).model('accounts')
+				await accounts.table.set({ code: 'a1', name: 'Acme' })
+				await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
+				const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
+				expect(one(rows(loaded?.contacts)[0]?.account).name).toBe('Acme')
+				expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1', 'r1'])
+				await accounts.link('a1', 'reps', 'r2')
+				await accounts.unlink('a1', 'reps', 'r1')
+				expect(await accounts.links('a1', 'reps')).toEqual(['r2'])
+				expect(events.calls).toEqual([['a1', 'reps']])
+				throw fault
+			}),
+		).rejects.toBe(fault)
+		expect(await db.table('junction').records()).toEqual(original)
+		expect(await db.table('accounts').get('a1')).toBeUndefined()
+		expect(await db.table('contacts').get('c1')).toBeUndefined()
+		expect(events.calls).toEqual([['a1', 'reps']])
+	})
+})
 
 describe('Model — surface', () => {
 	it('exposes name, a fully typed underlying table, and its relation map', async () => {
@@ -67,6 +138,62 @@ describe('Model — load (relationships)', () => {
 })
 
 describe('Model — nested includes', () => {
+	it('T8 many groups by the raw foreign key when a nested relation shadows it', async () => {
+		const { db } = await setup()
+		const manager = createRelationManager<typeof MODEL_TABLES>({
+			storage: db,
+			relations: {
+				accounts: { contacts: hasMany('accountId') },
+				contacts: { accountId: belongsTo('accountId', 'accounts') },
+			},
+		})
+		const account = await manager.model('accounts').load('acc1', { contacts: { accountId: true } })
+		expect(rows(account?.contacts).map((row) => row.id)).toEqual(['con1', 'con2'])
+		expect(rows(account?.contacts).map((row) => one(row.accountId).name)).toEqual(['Acme', 'Acme'])
+		expect((await db.table('contacts').get('con1'))?.accountId).toBe('acc1')
+	})
+	it('T8 belongs indexes by the raw primary when a nested relation shadows it', async () => {
+		const { db } = await setup()
+		const manager = createRelationManager<typeof MODEL_TABLES>({
+			storage: db,
+			relations: {
+				accounts: { classification: belongsTo('classificationId', 'classifications') },
+				classifications: { id: hasMany('classificationId', 'accounts') },
+			},
+		})
+		const account = await manager.model('accounts').load('acc1', { classification: { id: true } })
+		expect(one(account?.classification).label).toBe('Commercial')
+		expect(rows(one(account?.classification).id).map((row) => row.name)).toEqual(['Acme', 'Beta'])
+	})
+	it('T8 through indexes by the raw target primary when a nested relation shadows it', async () => {
+		const { db } = await setup()
+		const manager = createRelationManager<typeof MODEL_TABLES>({
+			storage: db,
+			relations: {
+				accounts: { reps: hasThrough('accountReps', 'accountId', 'repId', 'reps') },
+				reps: { id: hasMany('repId', 'accountReps') },
+			},
+		})
+		const account = await manager.model('accounts').load('acc1', { reps: { id: true } })
+		expect(rows(account?.reps).map((row) => row.name)).toEqual(['Rae', 'Bo'])
+		expect(rows(account?.reps).map((row) => rows(row.id).map((junction) => junction.id))).toEqual([
+			['ar1'],
+			['ar2'],
+		])
+	})
+	it('T8 morph groups by the raw foreign key when a nested relation shadows it', async () => {
+		const { db } = await setup()
+		const manager = createRelationManager<typeof MODEL_TABLES>({
+			storage: db,
+			relations: {
+				accounts: { notes: hasMorph('entityId', 'entityType', 'account', 'notes') },
+				notes: { entityId: belongsTo('entityId', 'accounts') },
+			},
+		})
+		const account = await manager.model('accounts').load('acc1', { notes: { entityId: true } })
+		expect(rows(account?.notes).map((row) => row.id)).toEqual(['n1'])
+		expect(one(rows(account?.notes)[0]?.entityId).name).toBe('Acme')
+	})
 	it('loads a relation of a relation (batched, no N+1)', async () => {
 		const { accounts } = await setup()
 		const acme = await accounts.load('acc1', { contacts: { account: true } })
@@ -138,16 +265,40 @@ describe('Model — through management', () => {
 		expect(events.link.calls).toEqual([['acc1', 'reps']])
 	})
 
-	it('rolls back every matching removal when one delete fails', async () => {
-		const driver = new FaultDriver(createMemoryDriver(), 2)
+	it('T4 leaves completed removals outside a transaction when a delete fails', async () => {
+		const fault = new Error('delete boundary fault')
+		const driver = new FaultDriver(createMemoryDriver(), 2, fault)
 		const { db, accounts } = await setup(driver)
 		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
 		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
-		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toThrow(
-			'FaultDriver delete failure',
-		)
-		expect(await db.table('accountReps').count()).toBe(3)
+		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toBe(fault)
+		expect(await db.table('accountReps').count()).toBe(2)
+		expect(await db.table('accountReps').get('ar1')).toBeUndefined()
+		expect(await db.table('accountReps').get('ar3')).toBeDefined()
 		expect(events.unlink.count).toBe(0)
+	})
+
+	it('T5 restores every matching removal inside a transaction when a delete fails', async () => {
+		const fault = new Error('delete boundary fault')
+		const { db, accounts } = await setup(new FaultDriver(createMemoryDriver(), 2, fault))
+		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
+		const events = createRecorder<[key: string | number, relation: string]>()
+		await expect(
+			db.transaction(async (storage) => {
+				const scoped = createRelationManager({
+					storage,
+					relations: { accounts: accounts.relations },
+					model: { on: { unlink: events.handler } },
+				}).model('accounts')
+				await scoped.unlink('acc1', 'reps', 'rep1')
+			}),
+		).rejects.toBe(fault)
+		expect((await db.table('accountReps').records()).map((row) => row.id)).toEqual([
+			'ar1',
+			'ar2',
+			'ar3',
+		])
+		expect(events.count).toBe(0)
 	})
 })
 

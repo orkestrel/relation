@@ -13,9 +13,39 @@ import {
 	RelationError,
 	resolveRelation,
 	resolveRelationMap,
+	validateRelationTable,
 } from '@src/core'
+import { createDatabase, createMemoryDriver } from '@orkestrel/database'
 import { captureError, readProperty } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
+import { MANAGER_TABLES } from '../../setup.js'
+
+describe('validateRelationTable', () => {
+	it('resolves a declared target without performing a data operation', () => {
+		const storage = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
+		expect(validateRelationTable(storage, 'accounts', 'contacts', 'contacts')).toBeUndefined()
+		expect(storage.status).toBe('idle')
+	})
+	it.each([false, true])('translates a missing table with junction=%s', (junction) => {
+		const storage = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
+		expect(() =>
+			validateRelationTable(storage, 'accounts', 'contacts', 'missing', junction),
+		).toThrow(
+			expect.objectContaining({
+				code: 'INVALID',
+				context: { model: 'accounts', relation: 'contacts', table: 'missing' },
+				message: `Model 'accounts' relation 'contacts' ${junction ? 'uses undeclared junction' : 'targets undeclared table'} 'missing'`,
+			}),
+		)
+	})
+	it('propagates a closed root error without translating its code', async () => {
+		const storage = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
+		await storage.close()
+		expect(() => validateRelationTable(storage, 'accounts', 'contacts', 'contacts')).toThrow(
+			expect.objectContaining({ code: 'CLOSED' }),
+		)
+	})
+})
 
 describe('resolveRelation — shorthand', () => {
 	it('resolves a string to belongs', () => {
@@ -170,6 +200,22 @@ describe('countAttached', () => {
 })
 
 describe('indexRows', () => {
+	it('indexes by raw keys while attaching distinct positional values', () => {
+		const raw = [{ id: 'r1' }, { id: 'r2' }]
+		const values = [
+			{ id: 'shadow', label: 'First' },
+			{ id: 'shadow', label: 'Second' },
+		]
+		const indexed = indexRows(raw, 'id', values)
+		expect(indexed.get('r1')).toBe(values[0])
+		expect(indexed.get('r2')).toBe(values[1])
+		expect(indexed.has('shadow')).toBe(false)
+		expect(raw).toEqual([{ id: 'r1' }, { id: 'r2' }])
+	})
+	it('omits missing values and ignores values without a raw row', () => {
+		expect(indexRows([{ id: 'r1' }], 'id', []).size).toBe(0)
+		expect(indexRows([], 'id', [{ id: 'r1' }]).size).toBe(0)
+	})
 	it('keys each row by the string form of its column', () => {
 		const index = indexRows([{ id: 'r1' }, { id: 'r2' }], 'id')
 		expect([...index.keys()].sort()).toEqual(['r1', 'r2'])
@@ -204,6 +250,23 @@ describe('indexRows', () => {
 })
 
 describe('groupRows', () => {
+	it('groups by raw keys while attaching distinct positional values in order', () => {
+		const raw = [{ author: 'u1' }, { author: 'u2' }, { author: 'u1' }]
+		const values = [
+			{ author: 'shadow', id: 'p1' },
+			{ author: 'shadow', id: 'p2' },
+			{ author: 'shadow', id: 'p3' },
+		]
+		const grouped = groupRows(raw, 'author', values)
+		expect(grouped.get('u1')).toEqual([values[0], values[2]])
+		expect(grouped.get('u2')).toEqual([values[1]])
+		expect(grouped.has('shadow')).toBe(false)
+		expect(raw).toEqual([{ author: 'u1' }, { author: 'u2' }, { author: 'u1' }])
+	})
+	it('omits missing values and ignores values without a raw row', () => {
+		expect(groupRows([{ author: 'u1' }], 'author', []).size).toBe(0)
+		expect(groupRows([], 'author', [{ author: 'u1' }]).size).toBe(0)
+	})
 	it('collects every row sharing a key, in input order', () => {
 		const groups = groupRows(
 			[

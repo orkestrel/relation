@@ -3,7 +3,7 @@ import type { TableMap } from '@orkestrel/database'
 import { RelationManager } from './RelationManager.js'
 
 /**
- * Creates a {@link RelationManagerInterface} over a database and its relation map.
+ * Creates a {@link RelationManagerInterface} over storage and its relation map.
  *
  * @remarks
  * `relations` maps table names (constrained to the database's tables) to their
@@ -11,7 +11,9 @@ import { RelationManager } from './RelationManager.js'
  * `hasThrough` / `hasMorph`. `manager.model(name)` returns the typed model for a
  * table — its own table is fully typed, related rows load at the `Row` type.
  *
- * @param options - The `database` and an optional `relations` map
+ * At a typed root, pass the table map as the type argument. Transaction storage infers it.
+ *
+ * @param options - The `storage` and an optional `relations` map
  * @returns A typed {@link RelationManagerInterface}
  *
  * @example Defining relations
@@ -25,8 +27,8 @@ import { RelationManager } from './RelationManager.js'
  * 	hasMorph,
  * } from '@orkestrel/relation'
  *
- * const manager = createRelationManager({
- * 	database: db,
+ * const manager = createRelationManager<typeof TABLES>({
+ * 	storage: db,
  * 	relations: {
  * 		accounts: {
  * 			classification: belongsTo('classificationId', 'classifications'), // foreign key on accounts

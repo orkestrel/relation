@@ -1,5 +1,5 @@
 import type {
-	DatabaseInterface,
+	DatabaseStorageInterface,
 	Key,
 	OperationOptions,
 	OrderDirection,
@@ -254,8 +254,8 @@ export interface FindOptions extends OperationOptions {
  * `load` fires once per relation that an eager-load resolves, carrying the relation name +
  * the count of related rows attached for the whole record set (it is the batched load
  * moment, not one event per record — there is no N+1 in the events either). `link` /
- * `unlink` fire after a junction row is inserted / removed, carrying the owning key + the
- * relation name. Listener isolation is the emitter's: every event is emitted
+ * `unlink` fire after the junction operation completes within the bound scope and before
+ * any outer commit, carrying the owning key + the relation name. Listener isolation is the emitter's: every event is emitted
  * directly and a listener throw is routed to the emitter's `error` handler (the `error`
  * option), never onto this map, and sits strictly after the load resolves / the junction op
  * completes — so a throwing observer can never corrupt the eager-load batching or a
@@ -298,8 +298,7 @@ export type ModelEventMap = {
  * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
  * `link` is idempotent for sequential calls: an existing pair writes nothing and
- * emits nothing. `unlink` removes matching junction rows inside one database
- * transaction, so a fault rolls the removal back.
+ * emits nothing. `unlink` shares the atomicity of the bound storage's scope.
  */
 export interface ModelInterface<T = Row> {
 	readonly emitter: EmitterInterface<ModelEventMap>
@@ -351,7 +350,11 @@ export interface ModelInterface<T = Row> {
 	 */
 	link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
 	/**
-	 * Removes every matching junction row for a `through` relation inside one transaction.
+	 * Removes every matching junction row for a `through` relation through the bound storage.
+	 *
+	 * @remarks
+	 * Atomicity is the enclosing scope's: enclose the call in `database.transaction()` for
+	 * all-or-nothing removal; outside one, a fault leaves the removals made before it.
 	 *
 	 * @param key - The owning record's primary key
 	 * @param relation - The `through` relation's name
@@ -388,14 +391,16 @@ export interface ModelInterface<T = Row> {
  */
 export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	/**
-	 * Holds the database to build the registry over.
+	 * Holds the storage the registry resolves tables through: a database, or the storage a transaction scope supplies.
 	 *
 	 * @remarks
-	 * Intersected with the broad `DatabaseInterface` so the manager gets both the
-	 * precise view (typing each declared table for `model()`) and the broad view
-	 * (runtime table lookup by name while resolving relations).
+	 * Intersected with the broad `DatabaseStorageInterface` so `model()` types each
+	 * declared table and loaders look related tables up by runtime name. A manager over
+	 * transaction storage belongs to that callback; its models and tables throw `CONFLICT`
+	 * after settlement. Construction resolves every relation target and junction through
+	 * `table()`; an undeclared one throws `INVALID`, and every other storage error propagates unchanged.
 	 */
-	readonly database: DatabaseInterface<T> & DatabaseInterface
+	readonly storage: DatabaseStorageInterface<T> & DatabaseStorageInterface
 	readonly relations?: RelationsShape<T>
 	readonly model?: {
 		readonly on?: EmitterHooks<ModelEventMap>

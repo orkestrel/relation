@@ -17,7 +17,10 @@ describe('createRelationManager', () => {
 			{ id: 'p2', author: 'u1', title: 'Second' },
 		])
 
-		const manager = createRelationManager({ database: db, relations: INTEGRATION_RELATIONS })
+		const manager = createRelationManager<typeof INTEGRATION_TABLES>({
+			storage: db,
+			relations: INTEGRATION_RELATIONS,
+		})
 		const users = manager.model('users')
 		expect(users.name).toBe('users')
 

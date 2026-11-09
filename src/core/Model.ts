@@ -1,5 +1,5 @@
 import type {
-	DatabaseInterface,
+	DatabaseStorageInterface,
 	Key,
 	OperationOptions,
 	Row,
@@ -33,7 +33,7 @@ import { RelationError } from './errors.js'
  *
  * @remarks
  * The model's own table is fully typed (`table`); related tables are reached by
- * runtime name through the database at the broad `Row` type. Loading is batched:
+ * runtime name through the bound storage at the broad `Row` type. Loading is batched:
  * a direct relation uses one query for the whole record set, while a `through`
  * relation uses two (junction then target); both counts remain constant regardless
  * of parent count. Nested includes recurse through the registry `lookup`, so each
@@ -57,11 +57,11 @@ import { RelationError } from './errors.js'
  * const relations = { posts: hasMany('author') }
  * const users = new Model(
  * 	'users',
- * 	database.table('users'),
+ * 	storage.table('users'),
  * 	resolveRelationMap(relations),
  * 	relations,
  * 	() => undefined,
- * 	database,
+ * 	storage,
  * )
  * users.emitter.on('load', (name, count) => metrics.record(`relation.${name}`, count))
  * const ada = await users.load('u1', { posts: true })
@@ -73,7 +73,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	readonly #resolved: ReadonlyMap<string, ResolvedRelation>
 	readonly #relations: RelationMap
 	readonly #lookup: (model: string) => RelationContext | undefined
-	readonly #database: DatabaseInterface
+	readonly #storage: DatabaseStorageInterface
 	// The push observation surface — owned, never inherited. The emitter isolates a
 	// listener throw (routing it to the `error` handler), so it can never escape into the
 	// batched eager-load.
@@ -83,12 +83,15 @@ export class Model<T = Row> implements ModelInterface<T> {
 	 * Constructs a model over one table and its resolved relations.
 	 *
 	 * @param name - The model's table name
-	 * @param table - The typed table this model's own reads and writes go through
+	 * @param table - The typed table this model's own reads and writes go through; take it
+	 *   from `storage` so both belong to one scope, as `RelationManager` does
+	 *   (a root table read inside a transaction refuses with `CONFLICT`)
 	 * @param resolved - The model's relations, resolved by `resolveRelationMap`
 	 * @param relations - The raw relation map the resolved relations came from
 	 * @param lookup - Reads a related model's {@link RelationContext} for a nested include,
-	 *   and returns `undefined` for a model the registry does not hold
-	 * @param database - The broad database used to read related and junction tables by name
+	 *   and returns `undefined` for a model the registry does not hold; its contexts must
+	 *   resolve through the same `storage`
+	 * @param storage - The broad storage used to read related and junction tables by name
 	 * @param on - Initial {@link ModelEventMap} listeners
 	 * @param error - Receives a listener throw as `(error, event)`. Default: the throw is
 	 *   swallowed.
@@ -99,7 +102,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		resolved: ReadonlyMap<string, ResolvedRelation>,
 		relations: RelationMap,
 		lookup: (model: string) => RelationContext | undefined,
-		database: DatabaseInterface,
+		storage: DatabaseStorageInterface,
 		on?: EmitterHooks<ModelEventMap>,
 		error?: EmitterErrorHandler,
 	) {
@@ -108,7 +111,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		this.#resolved = resolved
 		this.#relations = relations
 		this.#lookup = lookup
-		this.#database = database
+		this.#storage = storage
 		this.#emitter = new Emitter<ModelEventMap>({
 			...(on !== undefined ? { on } : {}),
 			...(error !== undefined ? { error } : {}),
@@ -203,7 +206,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const junction = this.#database.table(resolved.through)
+		const junction = this.#storage.table(resolved.through)
 		const existing = await junction.count(
 			{
 				conditions: [
@@ -223,7 +226,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 	async unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const junction = this.#database.table(resolved.through)
+		const junction = this.#storage.table(resolved.through)
 		const rows = await junction.records(
 			{
 				conditions: [
@@ -243,21 +246,17 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		await this.#database.transaction(async (transaction) => {
-			const scoped = transaction.table(resolved.through)
-			for (const row of rows) {
-				const id = extractKey(row, junction.primary)
-				if (id !== undefined) await scoped.remove(id, options)
-			}
-		}, options)
-		// Observe the removal only after the transaction commits.
+		for (const row of rows) {
+			const id = extractKey(row, junction.primary)
+			if (id !== undefined) await junction.remove(id, options)
+		}
 		this.#emitter.emit('unlink', key, relation)
 	}
 
 	async links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]> {
 		checkAbort(options?.signal)
 		const resolved = this.#through(relation)
-		const junction = this.#database.table(resolved.through)
+		const junction = this.#storage.table(resolved.through)
 		const rows = await junction.records(
 			{
 				conditions: [
@@ -361,7 +360,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const column = resolved.column
 		const keys = [...new Set(records.map((record) => readColumn(record, column)).filter(isDefined))]
 		if (keys.length === 0) return records.map(() => undefined)
-		const related = this.#database.table(resolved.model)
+		const related = this.#storage.table(resolved.model)
 		const rows = await related.records(
 			{
 				conditions: [
@@ -375,7 +374,11 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const index = indexRows(await this.#nest(resolved.model, rows, sub, options), related.primary)
+		const index = indexRows(
+			rows,
+			related.primary,
+			await this.#nest(resolved.model, rows, sub, options),
+		)
 		return records.map((record) => {
 			const fk = readColumn(record, column)
 			return isDefined(fk) ? index.get(String(fk)) : undefined
@@ -394,13 +397,13 @@ export class Model<T = Row> implements ModelInterface<T> {
 			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
-		const rows = await this.#database.table(resolved.model).records(
+		const rows = await this.#storage.table(resolved.model).records(
 			{
 				conditions: [{ column: foreign, operator: 'any', values: keys, connector: 'and' }],
 			},
 			options,
 		)
-		const groups = groupRows(await this.#nest(resolved.model, rows, sub, options), foreign)
+		const groups = groupRows(rows, foreign, await this.#nest(resolved.model, rows, sub, options))
 		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 
@@ -429,7 +432,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (parents.length === 0) return records.map(() => [])
 
-		const junctions = await this.#database.table(resolved.through).records(
+		const junctions = await this.#storage.table(resolved.through).records(
 			{
 				conditions: [{ column: source, operator: 'any', values: parents, connector: 'and' }],
 			},
@@ -447,7 +450,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 
 		const targets = [...new Set([...targetsBySource.values()].flat())]
 		if (targets.length === 0) return records.map(() => [])
-		const related = this.#database.table(resolved.model)
+		const related = this.#storage.table(resolved.model)
 		const rows = await related.records(
 			{
 				conditions: [
@@ -461,7 +464,11 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const index = indexRows(await this.#nest(resolved.model, rows, sub, options), related.primary)
+		const index = indexRows(
+			rows,
+			related.primary,
+			await this.#nest(resolved.model, rows, sub, options),
+		)
 
 		return records.map((record) => {
 			const out: Row[] = []
@@ -485,7 +492,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			...new Set(records.map((record) => readColumn(record, primary)).filter(isDefined)),
 		]
 		if (keys.length === 0) return records.map(() => [])
-		const rows = await this.#database.table(resolved.model).records(
+		const rows = await this.#storage.table(resolved.model).records(
 			{
 				conditions: [
 					{ column: foreign, operator: 'any', values: keys, connector: 'and' },
@@ -499,7 +506,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 			},
 			options,
 		)
-		const groups = groupRows(await this.#nest(resolved.model, rows, sub, options), foreign)
+		const groups = groupRows(rows, foreign, await this.#nest(resolved.model, rows, sub, options))
 		return records.map((record) => groups.get(String(readColumn(record, primary))) ?? [])
 	}
 

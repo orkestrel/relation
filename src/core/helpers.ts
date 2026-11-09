@@ -5,7 +5,8 @@ import type {
 	Relationship,
 	ResolvedRelation,
 } from './types.js'
-import type { Row } from '@orkestrel/database'
+import type { DatabaseStorageInterface, Row } from '@orkestrel/database'
+import { isDatabaseError } from '@orkestrel/database'
 import { isArray, isDefined, isObject, isString } from '@orkestrel/contract'
 import { isRelationDescriptor } from './validators.js'
 import { RelationError } from './errors.js'
@@ -15,6 +16,40 @@ import { RelationError } from './errors.js'
 // an explicit `relationship`; hand-written descriptors fall back to field inference.
 
 // === Resolution
+
+/**
+ * Validates a relation table through its bound storage, translating only an undeclared table.
+ *
+ * @param storage - The storage that resolves the table
+ * @param model - The owning model's name
+ * @param relation - The relation's name
+ * @param table - The target or junction table's name
+ * @param junction - If `true`, reports an undeclared junction; if `false`, reports an undeclared target. Default: `false`.
+ * @throws An `INVALID` {@link RelationError} for an undeclared table; every other storage error propagates unchanged.
+ *
+ * @example
+ * ```ts
+ * validateRelationTable(storage, 'accounts', 'contacts', 'contacts')
+ * ```
+ */
+export function validateRelationTable(
+	storage: DatabaseStorageInterface,
+	model: string,
+	relation: string,
+	table: string,
+	junction = false,
+): void {
+	try {
+		storage.table(table)
+	} catch (error) {
+		if (!isDatabaseError(error) || error.code !== 'NOT_FOUND') throw error
+		throw new RelationError(
+			'INVALID',
+			`Model '${model}' relation '${relation}' ${junction ? 'uses undeclared junction' : 'targets undeclared table'} '${table}'`,
+			{ model, relation, table },
+		)
+	}
+}
 
 /**
  * Resolves one raw {@link Relation} value into a flat {@link ResolvedRelation}.
@@ -204,9 +239,11 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
  * row already holds replaces it, and a row missing the column indexes under the string
  * `'undefined'`. This is the projection a `belongs` load and a `through` load use to
  * attach one related row per key.
+ * Optional `values` supply the attached rows by position; keys always come from `rows`.
  *
  * @param rows - The rows to index
  * @param column - The column to key on
+ * @param values - The rows to attach by position. Default: `rows`. Missing positions are omitted.
  * @returns A read-only map from each key's string form to its row
  *
  * @example
@@ -214,8 +251,17 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
  * indexRows([{ id: 'r1' }, { id: 'r2' }], 'id').get('r1') // { id: 'r1' }
  * ```
  */
-export function indexRows(rows: readonly Row[], column: string): ReadonlyMap<string, Row> {
-	return new Map(Iterator.from(rows).map((row) => [String(readColumn(row, column)), row]))
+export function indexRows(
+	rows: readonly Row[],
+	column: string,
+	values: readonly Row[] = rows,
+): ReadonlyMap<string, Row> {
+	return new Map(
+		Iterator.from(rows).flatMap((row, index): ReadonlyArray<readonly [string, Row]> => {
+			const value = values[index]
+			return value === undefined ? [] : [[String(readColumn(row, column)), value]]
+		}),
+	)
 }
 
 /**
@@ -227,9 +273,11 @@ export function indexRows(rows: readonly Row[], column: string): ReadonlyMap<str
  * a group, a key no row carries is absent rather than empty, and a row missing the
  * column groups under the string `'undefined'`. This is the projection a `many` load
  * and a `morph` load use to attach every related row per key.
+ * Optional `values` supply the attached rows by position; keys always come from `rows`.
  *
  * @param rows - The rows to group
  * @param column - The column to key on
+ * @param values - The rows to attach by position. Default: `rows`. Missing positions are omitted.
  * @returns A read-only map from each key's string form to its rows, in input order
  *
  * @example
@@ -240,13 +288,16 @@ export function indexRows(rows: readonly Row[], column: string): ReadonlyMap<str
 export function groupRows(
 	rows: readonly Row[],
 	column: string,
+	values: readonly Row[] = rows,
 ): ReadonlyMap<string, readonly Row[]> {
 	const groups = new Map<string, Row[]>()
-	for (const row of rows) {
+	for (const [index, row] of rows.entries()) {
+		const value = values[index]
+		if (value === undefined) continue
 		const key = String(readColumn(row, column))
 		const group = groups.get(key)
-		if (group !== undefined) group.push(row)
-		else groups.set(key, [row])
+		if (group !== undefined) group.push(value)
+		else groups.set(key, [value])
 	}
 	return groups
 }

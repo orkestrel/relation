@@ -23,17 +23,54 @@ export const INTEGRATION_RELATIONS: RelationsShape<typeof INTEGRATION_TABLES> = 
 	users: { posts: hasMany('author') },
 }
 
+/** Holds the relation loading fixture's table shapes. */
+export const MODEL_TABLES = {
+	accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
+	contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
+	classifications: { id: stringShape(), label: stringShape() },
+	profiles: { id: stringShape(), accountId: stringShape(), bio: stringShape() },
+	reps: { id: stringShape(), name: stringShape() },
+	accountReps: { id: stringShape(), accountId: stringShape(), repId: stringShape() },
+	notes: {
+		id: stringShape(),
+		entityId: stringShape(),
+		entityType: stringShape(),
+		body: stringShape(),
+	},
+}
+
+/** Holds the registry fixture's table shapes. */
+export const MANAGER_TABLES = {
+	accounts: { id: stringShape(), name: stringShape() },
+	contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
+}
+
+/** Holds the registry fixture's nested relations. */
+export const MANAGER_RELATIONS: RelationsShape<typeof MANAGER_TABLES> = {
+	accounts: { contacts: hasMany('accountId') },
+	contacts: { account: belongsTo('accountId', 'accounts') },
+}
+
+/** Holds a declared table with no relation map. */
+export const LOG_TABLES = { logs: { id: stringShape(), msg: stringShape() } }
+
 // ── Driver fault fixtures ─────────────────────────────────────────────────────
 
 /** Injects one configured delete failure through a real driver boundary. */
 export class FaultDriver implements DriverInterface {
 	readonly #driver: DriverInterface
 	readonly #after: number
+	readonly #fault: Error
 	#calls = 0
 
-	constructor(driver: DriverInterface, after: number) {
+	constructor(
+		driver: DriverInterface,
+		after: number,
+		fault = new Error('FaultDriver delete failure'),
+	) {
 		this.#driver = driver
 		this.#after = after
+		this.#fault = fault
 	}
 
 	open(schema: readonly TableSchema[]): Promise<void> {
@@ -58,7 +95,7 @@ export class FaultDriver implements DriverInterface {
 
 	delete(table: string, key: Key, options?: OperationOptions): Promise<boolean> {
 		this.#calls += 1
-		if (this.#calls >= this.#after) throw new Error('FaultDriver delete failure')
+		if (this.#calls >= this.#after) throw this.#fault
 		return this.#driver.delete(table, key, options)
 	}
 
@@ -102,20 +139,7 @@ export async function setup(
 ) {
 	const db = createDatabase({
 		driver,
-		tables: {
-			accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
-			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
-			classifications: { id: stringShape(), label: stringShape() },
-			profiles: { id: stringShape(), accountId: stringShape(), bio: stringShape() },
-			reps: { id: stringShape(), name: stringShape() },
-			accountReps: { id: stringShape(), accountId: stringShape(), repId: stringShape() },
-			notes: {
-				id: stringShape(),
-				entityId: stringShape(),
-				entityType: stringShape(),
-				body: stringShape(),
-			},
-		},
+		tables: MODEL_TABLES,
 	})
 
 	await db.table('classifications').set({ id: 'cls1', label: 'Commercial' })
@@ -134,8 +158,8 @@ export async function setup(
 		.table('notes')
 		.set({ id: 'n2', entityId: 'acc1', entityType: 'contact', body: 'skipped' })
 
-	const manager = createRelationManager({
-		database: db,
+	const manager = createRelationManager<typeof MODEL_TABLES>({
+		storage: db,
 		relations: {
 			accounts: {
 				classification: belongsTo('classificationId', 'classifications'),
@@ -155,21 +179,15 @@ export async function setup(
 export async function createManagerFixture() {
 	const db = createDatabase({
 		driver: createMemoryDriver(),
-		tables: {
-			accounts: { id: stringShape(), name: stringShape() },
-			contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
-		},
+		tables: MANAGER_TABLES,
 	})
 	await db.table('accounts').set({ id: 'acc1', name: 'Acme' })
 	await db.table('accounts').set({ id: 'acc2', name: 'Beta' })
 	await db.table('contacts').set({ id: 'con1', accountId: 'acc1', email: 'a@x.com' })
 
-	const manager = createRelationManager({
-		database: db,
-		relations: {
-			accounts: { contacts: hasMany('accountId') },
-			contacts: { account: belongsTo('accountId', 'accounts') },
-		},
+	const manager = createRelationManager<typeof MANAGER_TABLES>({
+		storage: db,
+		relations: MANAGER_RELATIONS,
 	})
 	return { db, manager }
 }
@@ -194,4 +212,36 @@ export async function openFixtureDriver() {
 	const driver = createMemoryDriver()
 	await driver.open(buildFixtureSchema())
 	return driver
+}
+
+/** Holds the transaction fixture's nested and custom-primary relations. */
+export const STORAGE_RELATIONS = {
+	accounts: {
+		contacts: hasMany('accountCode'),
+		reps: hasThrough('junction', 'accountCode', 'repCode', 'reps'),
+	},
+	contacts: { account: belongsTo('accountCode', 'accounts') },
+}
+
+/** Holds custom-primary table shapes for transaction proofs. */
+export const STORAGE_TABLES = {
+	accounts: { code: stringShape(), name: stringShape() },
+	contacts: { id: stringShape(), accountCode: stringShape() },
+	reps: { code: stringShape(), name: stringShape() },
+	junction: { id: stringShape(), accountCode: stringShape(), repCode: stringShape() },
+}
+
+/** Opens custom-primary tables with duplicate junctions for scope settlement proofs. */
+export async function createStorageFixture() {
+	const db = createDatabase({
+		driver: createMemoryDriver(),
+		tables: STORAGE_TABLES,
+		primary: { accounts: 'code', reps: 'code' },
+	})
+	await db.table('reps').set({ code: 'r1', name: 'Rae' })
+	await db.table('reps').set({ code: 'r2', name: 'Bo' })
+	await db.table('junction').set({ id: 'j1', accountCode: 'a1', repCode: 'r1' })
+	await db.table('junction').set({ id: 'j2', accountCode: 'a1', repCode: 'r1' })
+	await db.table('junction').set({ id: 'j3', accountCode: 'a0', repCode: 'r2' })
+	return db
 }

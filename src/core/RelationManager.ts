@@ -1,4 +1,4 @@
-import type { DatabaseInterface, RowOf, TableInterface, TableMap } from '@orkestrel/database'
+import type { DatabaseStorageInterface, RowOf, TableInterface, TableMap } from '@orkestrel/database'
 import type {
 	ModelInterface,
 	RelationContext,
@@ -8,8 +8,7 @@ import type {
 	RelationsShape,
 	ResolvedRelation,
 } from './types.js'
-import { RelationError } from './errors.js'
-import { resolveRelationMap } from './helpers.js'
+import { resolveRelationMap, validateRelationTable } from './helpers.js'
 import { Model } from './Model.js'
 
 /**
@@ -17,8 +16,8 @@ import { Model } from './Model.js'
  * {@link ModelInterface} per declared table.
  *
  * @remarks
- * Holds the database both at its precise type (to type each model's own table)
- * and at the broad `DatabaseInterface` (to fetch related tables by runtime name
+ * Holds storage both at its precise type (to type each model's own table)
+ * and at the broad `DatabaseStorageInterface` (to fetch related tables by runtime name
  * while loading). Construction validates every target and junction against the
  * database's declared tables, so invalid definitions fail before an operation runs.
  * The `model` option's `on` and `error` are threaded into every model vended, and
@@ -29,8 +28,8 @@ import { Model } from './Model.js'
  * ```ts
  * import { RelationManager, hasMany } from '@orkestrel/relation'
  *
- * const manager = new RelationManager({
- * 	database,
+ * const manager = new RelationManager<typeof TABLES>({
+ * 	storage: database,
  * 	relations: { users: { posts: hasMany('author') } },
  * 	model: { on: { load: (name, count) => metrics.record(`relation.${name}`, count) } },
  * })
@@ -39,43 +38,32 @@ import { Model } from './Model.js'
  * ```
  */
 export class RelationManager<T extends TableMap = TableMap> implements RelationManagerInterface<T> {
-	readonly #database: DatabaseInterface<T>
-	readonly #broad: DatabaseInterface
+	readonly #storage: DatabaseStorageInterface<T>
+	readonly #broad: DatabaseStorageInterface
 	readonly #relations: RelationsShape<T>
 	readonly #model: RelationManagerOptions['model']
 	readonly #resolved = new Map<string, ReadonlyMap<string, ResolvedRelation>>()
 
 	/**
-	 * Constructs a registry over a database and its relation definitions.
+	 * Constructs a registry over storage and its relation definitions.
 	 *
-	 * @param options - The `database`, an optional `relations` map, and the optional
+	 * @param options - The `storage`, an optional `relations` map, and the optional
 	 *   `model` emitter settings threaded into every model vended
 	 * @throws An `INVALID` {@link RelationError} when a relation targets a table or a
 	 *   junction the database does not declare
 	 */
 	constructor(options: RelationManagerOptions<T>) {
-		this.#database = options.database
-		this.#broad = options.database
+		this.#storage = options.storage
+		this.#broad = options.storage
 		this.#relations = options.relations ?? {}
 		this.#model = options.model
-		const declared = new Set(Object.keys(this.#broad.export()))
 		for (const [name, map] of Object.entries(this.#relations)) {
 			if (map === undefined) continue
 			const resolved = resolveRelationMap(map)
 			for (const [relation, entry] of resolved) {
-				if (!declared.has(entry.model)) {
-					throw new RelationError(
-						'INVALID',
-						`Model '${name}' relation '${relation}' targets undeclared table '${entry.model}'`,
-						{ model: name, relation, table: entry.model },
-					)
-				}
-				if (entry.relationship === 'through' && !declared.has(entry.through)) {
-					throw new RelationError(
-						'INVALID',
-						`Model '${name}' relation '${relation}' uses undeclared junction '${entry.through}'`,
-						{ model: name, relation, table: entry.through },
-					)
+				validateRelationTable(this.#broad, name, relation, entry.model)
+				if (entry.relationship === 'through') {
+					validateRelationTable(this.#broad, name, relation, entry.through, true)
 				}
 			}
 			this.#resolved.set(name, resolved)
@@ -89,7 +77,7 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>> {
 		const resolved = this.#resolved.get(name) ?? new Map<string, ResolvedRelation>()
 		const relations = this.#relations[name] ?? {}
-		return this.#vend(name, this.#database.table(name), resolved, relations)
+		return this.#vend(name, this.#storage.table(name), resolved, relations)
 	}
 
 	names(): readonly string[] {
