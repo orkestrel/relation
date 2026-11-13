@@ -1,6 +1,6 @@
 {
 	"name": "@orkestrel/relation",
-	"version": "0.0.21",
+	"version": "0.0.22",
 	"description": "A typed relation manager over database tables — batched eager loading and junction management, environment-agnostic. Part of the @orkestrel line.",
 	"keywords": [
 		"database",
@@ -88,6 +88,6 @@
 		"vitest": "^5.1.0"
 	},
 	"engines": {
-		"node": ">=22.12.0"
+		"node": "^22.18.0 || >=24.4.0"
 	}
 }
