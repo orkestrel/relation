@@ -187,6 +187,17 @@ describe('resolveRelation — raw descriptor inference', () => {
 		])
 	})
 
+	it('refuses a descriptor carrying a non-enumerable undeclared member as extra', () => {
+		const descriptor = { column: 'accountId' }
+		Object.defineProperty(descriptor, 'hidden', { value: 'x', enumerable: false })
+		const error = captureError(() => resolveRelation('contacts', descriptor))
+		expect(isRelationError(error)).toBe(true)
+		expect(readProperty(error, 'code')).toBe('INVALID')
+		expect(readProperty(readProperty(error, 'context'), 'faults')).toEqual([
+			{ reason: 'extra', path: ['hidden'] },
+		])
+	})
+
 	it('lists the relationship candidates when the relationship is outside the union', () => {
 		const error = captureError(() =>
 			invokeUnchecked(undefined, resolveRelation, ['contacts', { relationship: 'sideways' }]),

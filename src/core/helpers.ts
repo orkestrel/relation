@@ -9,9 +9,11 @@ import type {
 import type { DatabaseStorageInterface, Key, Row } from '@orkestrel/database'
 import { isDatabaseError } from '@orkestrel/database'
 import {
+	admitValue,
 	describeFaults,
 	isArray,
 	isDefined,
+	isFailure,
 	isRecord,
 	isString,
 	renderPath,
@@ -129,7 +131,7 @@ export function readRow<T>(table: string, row: T): T & Row {
  * is a `many` (foreign-key column on the related table); a {@link RelationDescriptor}
  * uses its explicit `relationship`, or infers it from the fields present. The target
  * model defaults to the relation name. A descriptor must pass `relationDescriptorContract`'s
- * strict guard: an enumerable, string-keyed undeclared member, a member holding another type, and
+ * strict guard: an undeclared member, enumerable or not, a member holding another type, and
  * a member present as `undefined` each refuse it, and no lossless repair admits it. The
  * refusal carries the contract's audit faults, described against its schema. Every column the resolved arm declares is validated here, which is
  * what lets each arm declare its columns required.
@@ -162,16 +164,16 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 		}
 		return { relationship: 'many', name, model: name, key }
 	}
-	if (!relationDescriptorContract.is(value)) {
-		// The audit runs only after the strict guard refused, so no repair ever admits a descriptor.
-		const faults = relationDescriptorContract.audit(value)
+	const admitted = admitValue(relationDescriptorContract, value)
+	if (isFailure(admitted)) {
+		const faults = admitted.error.faults
 		throw new RelationError(
 			'INVALID',
 			`Relation ${path}: expected a column string, a [key] array, or a relation descriptor\n${describeFaults(faults, relationDescriptorContract.schema)}`,
 			{ relation: name, faults },
 		)
 	}
-	const descriptor = value
+	const descriptor = admitted.value
 	const model = descriptor.model ?? name
 	// Inferred from the fields present when no explicit `relationship` is set.
 	const relationship: Relationship | undefined =
