@@ -2,7 +2,12 @@ import type { Row } from '@orkestrel/database'
 import type { ModelEventMap } from '@src/core'
 import type { MODEL_TABLES } from '../../setup.js'
 import { integerShape, stringShape } from '@orkestrel/contract'
-import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
+import {
+	StorageRecorder,
+	createDatabase,
+	createMemoryDriver,
+	isDatabaseError,
+} from '@orkestrel/database'
 import { createSQLiteDriver } from '@orkestrel/database/server'
 import {
 	belongsTo,
@@ -381,6 +386,54 @@ describe('Model — junction writes', () => {
 		expect(await db.table('accountReps').count()).toBe(1)
 	})
 
+	it('keeps a held pair and emits nothing when the signal aborts between the add and the has', async () => {
+		const controller = new AbortController()
+		const calls: string[] = []
+		const { db, accounts } = await createLoadFixture(1, 1, (table, method) => {
+			calls.push(method)
+			if (table === 'accountReps' && method === 'has') controller.abort('stop between steps')
+		})
+		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		await accounts.link('acc0', 'reps', 'rep0', { signal: controller.signal })
+		expect(calls).toEqual(['add', 'has'])
+		expect(events.link.count).toBe(0)
+		expect(await db.table('accountReps').count()).toBe(1)
+	})
+
+	it('leaves no row and no event when the signal aborts before the add', async () => {
+		const controller = new AbortController()
+		const { db, accounts } = await createLoadFixture(1, 0, (table, method) => {
+			if (table === 'accountReps' && method === 'add') controller.abort('stop before the add')
+		})
+		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		await expect(
+			accounts.link('acc0', 'reps', 'rep9', { signal: controller.signal }),
+		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
+		expect(events.link.count).toBe(0)
+		expect(await db.table('accountReps').count()).toBe(0)
+	})
+
+	it('reports a link event the caller saw for a row its scope later rolled back', async () => {
+		const db = await createStorageFixture()
+		const original = await db.table('junction').records()
+		const fault = new Error('outer failure')
+		const events = createRecorder<[key: string | number, relation: string]>()
+		await expect(
+			db.transaction(async (storage) => {
+				const accounts = createRelationManager({
+					storage,
+					relations: STORAGE_RELATIONS,
+					model: { on: { link: events.handler } },
+				}).model('accounts')
+				await accounts.link('a1', 'reps', 'r2')
+				expect(await accounts.links('a1', 'reps')).toEqual(['r1', 'r2'])
+				throw fault
+			}),
+		).rejects.toBe(fault)
+		expect(events.calls).toEqual([['a1', 'reps']])
+		expect(await db.table('junction').records()).toEqual(original)
+	})
+
 	it('refuses a root link while a transaction is active rather than reading it as linked', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { db, accounts } = await createLoadFixture(1, 0, calls.handler)
@@ -423,6 +476,36 @@ describe('Model — junction writes', () => {
 		await expect(accounts.link('acc1', 'reps', 'rep1')).rejects.toSatisfy(
 			(error: unknown) => isDatabaseError(error) && error.code === 'VALIDATION',
 		)
+	})
+})
+
+describe('Model — storage calls per relationship and nesting level', () => {
+	// The first call of each load is the keyed read of the base rows; the members after it are
+	// the relation queries the guide counts: a direct relation one, a `through` relation two.
+	const READ = 'read'
+	const SCAN = 'scan'
+	it.each([
+		['belongs', { classification: true }, [READ]],
+		['many', { contacts: true }, [SCAN]],
+		['one', { profile: true }, [SCAN]],
+		['morph', { notes: true }, [SCAN]],
+		['through', { reps: true }, [SCAN, READ]],
+		['two direct relations', { classification: true, contacts: true }, [READ, SCAN]],
+		['many then belongs', { contacts: { account: true } }, [SCAN, READ]],
+		['through then through', { reps: { accounts: true } }, [SCAN, READ, SCAN, READ]],
+	])('issues the same queries for %s whether 1 or 4 parents load', async (_, include, expected) => {
+		for (const parents of [1, 4]) {
+			const recorder = new StorageRecorder(createMemoryDriver())
+			const { accounts, keys } = await createLoadFixture(
+				parents,
+				2,
+				() => undefined,
+				recorder.driver,
+			)
+			const { calls } = await recorder.measure(() => accounts.load(keys, include))
+			expect(calls.map((call) => call.member)).toEqual([READ, ...expected])
+			expect(calls.every((call) => !call.scoped)).toBe(true)
+		}
 	})
 })
 
