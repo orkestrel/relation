@@ -1,6 +1,8 @@
 import type { DatabaseInterface, RowOf, TableInterface } from '@orkestrel/database'
 import { belongsTo, createRelationManager, hasThrough } from '@src/core'
 import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
+import { stringShape } from '@orkestrel/contract'
+import { captureError, invokeUnchecked, readProperty } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 import {
 	LOG_TABLES,
@@ -49,6 +51,48 @@ describe('RelationManager — registry', () => {
 })
 
 describe('RelationManager — validation', () => {
+	it.each([
+		[{ column: 42 }],
+		[{ relationship: ' belongs ', column: 'accountId' }],
+		[{ key: 'accountId', column: undefined }],
+	])('refuses the relation %o at construction rather than repairing it', (descriptor) => {
+		const db = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
+		const error = captureError(() =>
+			invokeUnchecked(undefined, createRelationManager, [
+				{ storage: db, relations: { accounts: { contacts: descriptor } } },
+			]),
+		)
+		expect(readProperty(error, 'code')).toBe('INVALID')
+		expect(readProperty(readProperty(error, 'context'), 'relation')).toBe('contacts')
+	})
+
+	it.each([
+		['source', 'accountId'],
+		['target', 'repId'],
+	])('refuses a junction keyed by its own %s column at construction', (role, column) => {
+		const db = createDatabase({
+			driver: createMemoryDriver(),
+			tables: {
+				accounts: { id: stringShape() },
+				reps: { id: stringShape() },
+				accountReps: { accountId: stringShape(), repId: stringShape() },
+			},
+			primary: { accountReps: column },
+		})
+		expect(() =>
+			createRelationManager({
+				storage: db,
+				relations: { accounts: { reps: hasThrough('accountReps', 'accountId', 'repId', 'reps') } },
+			}),
+		).toThrow(
+			expect.objectContaining({
+				code: 'INVALID',
+				message: `Relation accounts.reps keys its junction accountReps by its ${role} column ${column}; give the junction a separate text primary column, which link fills with computeLinkKey`,
+				context: { model: 'accounts', relation: 'reps', table: 'accountReps', column },
+			}),
+		)
+	})
+
 	it('T6 validates targets and junctions inside transaction storage', async () => {
 		const db = createDatabase({ driver: createMemoryDriver(), tables: MODEL_TABLES })
 		await db.transaction(async (storage) => {
@@ -60,7 +104,8 @@ describe('RelationManager — validation', () => {
 			).toThrow(
 				expect.objectContaining({
 					code: 'INVALID',
-					message: "Model 'accounts' relation 'ghost' targets undeclared table 'ghosts'",
+					message:
+						"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's model",
 					context: { model: 'accounts', relation: 'ghost', table: 'ghosts' },
 				}),
 			)
@@ -72,7 +117,8 @@ describe('RelationManager — validation', () => {
 			).toThrow(
 				expect.objectContaining({
 					code: 'INVALID',
-					message: "Model 'accounts' relation 'reps' uses undeclared junction 'missing'",
+					message:
+						"Relation accounts.reps uses undeclared junction missing; declare it in the database's tables or correct the relation's through",
 					context: { model: 'accounts', relation: 'reps', table: 'missing' },
 				}),
 			)
@@ -108,7 +154,8 @@ describe('RelationManager — validation', () => {
 		).toThrow(
 			expect.objectContaining({
 				code: 'INVALID',
-				message: "Model 'accounts' relation 'ghost' targets undeclared table 'ghosts'",
+				message:
+					"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's model",
 				context: { model: 'accounts', relation: 'ghost', table: 'ghosts' },
 			}),
 		)
@@ -123,7 +170,8 @@ describe('RelationManager — validation', () => {
 		).toThrow(
 			expect.objectContaining({
 				code: 'INVALID',
-				message: "Model 'accounts' relation 'reps' uses undeclared junction 'missing'",
+				message:
+					"Relation accounts.reps uses undeclared junction missing; declare it in the database's tables or correct the relation's through",
 				context: { model: 'accounts', relation: 'reps', table: 'missing' },
 			}),
 		)

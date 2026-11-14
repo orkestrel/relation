@@ -5,14 +5,14 @@ import type {
 	RelationManagerInterface,
 	RelationManagerOptions,
 	RelationMap,
-	RelationsShape,
+	RelationSchema,
 	ResolvedRelation,
 } from './types.js'
-import { resolveRelationMap, validateRelationTable } from './helpers.js'
+import { resolveRelationMap, validateRelationJunction, validateRelationTable } from './helpers.js'
 import { Model } from './Model.js'
 
 /**
- * Resolves a {@link RelationsShape} once at construction and vends a typed
+ * Resolves a {@link RelationSchema} once at construction and vends a typed
  * {@link ModelInterface} per declared table.
  *
  * @remarks
@@ -40,7 +40,7 @@ import { Model } from './Model.js'
 export class RelationManager<T extends TableMap = TableMap> implements RelationManagerInterface<T> {
 	readonly #storage: DatabaseStorageInterface<T>
 	readonly #broad: DatabaseStorageInterface
-	readonly #relations: RelationsShape<T>
+	readonly #relations: RelationSchema<T>
 	readonly #model: RelationManagerOptions['model']
 	readonly #resolved = new Map<string, ReadonlyMap<string, ResolvedRelation>>()
 
@@ -64,6 +64,7 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 				validateRelationTable(this.#broad, name, relation, entry.model)
 				if (entry.relationship === 'through') {
 					validateRelationTable(this.#broad, name, relation, entry.through, true)
+					validateRelationJunction(name, entry, this.#broad.table(entry.through).primary)
 				}
 			}
 			this.#resolved.set(name, resolved)

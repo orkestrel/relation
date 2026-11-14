@@ -78,7 +78,7 @@ export type RelationErrorCode = 'INVALID' | 'UNKNOWN_RELATION' | 'NOT_THROUGH'
  * Keys are constrained to the database's declared table names, so relations can
  * only be defined for tables that exist. A table may be omitted (no relations).
  */
-export type RelationsShape<T extends TableMap = TableMap> = {
+export type RelationSchema<T extends TableMap = TableMap> = {
 	readonly [K in keyof T]?: RelationMap
 }
 
@@ -134,7 +134,9 @@ export interface ResolvedOne {
  * @remarks
  * `through` is the junction table, `source` its foreign-key column pointing at the
  * owning model, and `target` its foreign-key column pointing at the related model.
- * These are the columns `link` / `unlink` / `links` write and read.
+ * These are the columns `link` / `unlink` / `links` write and read. The junction's
+ * primary column must store text: `link` writes the pair's derived key there, so a
+ * numeric primary column refuses the row with the database's `VALIDATION` error.
  */
 export interface ResolvedThrough {
 	readonly relationship: 'through'
@@ -214,9 +216,9 @@ export type LoadedMap = Record<string, Row | readonly Row[] | undefined>
  *
  * @remarks
  * The base row is fully typed (the table's row type); the relation properties
- * ({@link LoadedMap}) are broad — narrow them at the use site. Typing each
- * relation property to its target row is a deliberate (documented) deferral, like
- * the database guide's deferred pieces.
+ * ({@link LoadedMap}) are broad — narrow them at the use site. A relation property
+ * typed to its target row is refused until a consumer narrows a loaded relation
+ * property by hand.
  */
 export type Loaded<T> = T & Readonly<LoadedMap>
 
@@ -272,13 +274,13 @@ export type ModelEventMap = {
 	 */
 	readonly load: readonly [name: string, count: number]
 	/**
-	 * Fires after a junction row is inserted for a `through` relation — the owning key +
-	 * relation name.
+	 * Fires after `link` inserts a junction row for a `through` relation — the owning key +
+	 * relation name. A pair the junction already holds inserts nothing and fires nothing.
 	 */
 	readonly link: readonly [key: Key, relation: string]
 	/**
-	 * Fires after a junction row is removed for a `through` relation — the owning key +
-	 * relation name.
+	 * Fires after `unlink` removes a junction row for a `through` relation — the owning key +
+	 * relation name. A pair the junction does not hold removes nothing and fires nothing.
 	 */
 	readonly unlink: readonly [key: Key, relation: string]
 }
@@ -297,8 +299,8 @@ export type ModelEventMap = {
  * Exposes a typed {@link emitter} carrying the eager-load + junction
  * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
- * `link` is idempotent for sequential calls: an existing pair writes nothing and
- * emits nothing. `unlink` shares the atomicity of the bound storage's scope.
+ * `link` is one insert under the pair's derived key, and `unlink` one remove of it,
+ * so a pair holds at most one junction row, concurrent calls included.
  */
 export interface ModelInterface<T = Row> {
 	readonly emitter: EmitterInterface<ModelEventMap>
@@ -335,11 +337,13 @@ export interface ModelInterface<T = Row> {
 	 */
 	find(include: Include, options?: FindOptions): Promise<ReadonlyArray<Loaded<T>>>
 	/**
-	 * Inserts a missing junction row for a `through` relation.
+	 * Inserts the junction row for a pair through a `through` relation.
 	 *
 	 * @remarks
-	 * Idempotent for sequential calls: a pair the junction already holds writes nothing and
-	 * emits nothing. Concurrent calls for one pair may each insert.
+	 * One insert keyed by the pair's derived key (see `computeLinkKey`) into the junction's
+	 * primary column, which must store text. A pair the junction already holds writes
+	 * nothing and emits nothing, so concurrent calls for one pair leave one row and one
+	 * `link` event.
 	 *
 	 * @param key - The owning record's primary key
 	 * @param relation - The `through` relation's name
@@ -350,11 +354,11 @@ export interface ModelInterface<T = Row> {
 	 */
 	link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
 	/**
-	 * Removes every matching junction row for a `through` relation through the bound storage.
+	 * Removes the junction row for a pair through a `through` relation.
 	 *
 	 * @remarks
-	 * Atomicity is the enclosing scope's: enclose the call in `database.transaction()` for
-	 * all-or-nothing removal; outside one, a fault leaves the removals made before it.
+	 * One remove of the pair's derived key through the bound storage. It emits `unlink` only
+	 * when a row was removed; a pair the junction does not hold emits nothing.
 	 *
 	 * @param key - The owning record's primary key
 	 * @param relation - The `through` relation's name
@@ -401,7 +405,7 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	 * `table()`; an undeclared one throws `INVALID`, and every other storage error propagates unchanged.
 	 */
 	readonly storage: DatabaseStorageInterface<T> & DatabaseStorageInterface
-	readonly relations?: RelationsShape<T>
+	readonly relations?: RelationSchema<T>
 	readonly model?: {
 		readonly on?: EmitterHooks<ModelEventMap>
 		readonly error?: EmitterErrorHandler
@@ -412,7 +416,7 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
  * Vends a typed {@link ModelInterface} per table.
  *
  * @remarks
- * Built from a database and a {@link RelationsShape}; relations are resolved once
+ * Built from a database and a {@link RelationSchema}; relations are resolved once
  * at construction. `model(name)` returns the model for a declared table, typed by
  * that table's row. Each call constructs a model, and the returned handle owns its
  * own emitter, so retain the handle a subscription is taken on.

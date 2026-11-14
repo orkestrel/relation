@@ -4,11 +4,20 @@ import type {
 	RelationMap,
 	Relationship,
 	ResolvedRelation,
+	ResolvedThrough,
 } from './types.js'
-import type { DatabaseStorageInterface, Row } from '@orkestrel/database'
+import type { DatabaseStorageInterface, Key, Row } from '@orkestrel/database'
 import { isDatabaseError } from '@orkestrel/database'
-import { isArray, isDefined, isObject, isString } from '@orkestrel/contract'
-import { isRelationDescriptor } from './validators.js'
+import {
+	describeFaults,
+	isArray,
+	isDefined,
+	isRecord,
+	isString,
+	renderPath,
+	resolveField,
+} from '@orkestrel/contract'
+import { relationDescriptorContract } from './contracts.js'
 import { RelationError } from './errors.js'
 
 // Resolve raw relation values into the flat `ResolvedRelation` form once, at
@@ -45,10 +54,71 @@ export function validateRelationTable(
 		if (!isDatabaseError(error) || error.code !== 'NOT_FOUND') throw error
 		throw new RelationError(
 			'INVALID',
-			`Model '${model}' relation '${relation}' ${junction ? 'uses undeclared junction' : 'targets undeclared table'} '${table}'`,
+			junction
+				? `Relation ${renderPath([model, relation])} uses undeclared junction ${renderPath([table])}; declare it in the database's tables or correct the relation's through`
+				: `Relation ${renderPath([model, relation])} targets undeclared table ${renderPath([table])}; declare it in the database's tables or correct the relation's model`,
 			{ model, relation, table },
 		)
 	}
+}
+
+/**
+ * Validates that a `through` relation's junction keys its rows by a column of its own.
+ *
+ * @remarks
+ * `link` writes the pair's `computeLinkKey` into the junction's primary column, so a junction
+ * whose primary column is the relation's `source` or `target` column cannot hold that key.
+ *
+ * @param model - The owning model's name
+ * @param resolved - The resolved `through` relation
+ * @param primary - The junction table's primary-key column
+ * @throws An `INVALID` {@link RelationError} when `primary` is the relation's `source` or
+ *   `target` column
+ *
+ * @example
+ * ```ts
+ * validateRelationJunction('accounts', resolved, 'id') // a junction keyed by `id` passes
+ * ```
+ */
+export function validateRelationJunction(
+	model: string,
+	resolved: ResolvedThrough,
+	primary: string,
+): void {
+	const role =
+		primary === resolved.source ? 'source' : primary === resolved.target ? 'target' : undefined
+	if (role === undefined) return
+	throw new RelationError(
+		'INVALID',
+		`Relation ${renderPath([model, resolved.name])} keys its junction ${renderPath([resolved.through])} by its ${role} column ${renderPath([primary])}; give the junction a separate text primary column, which link fills with computeLinkKey`,
+		{ model, relation: resolved.name, table: resolved.through, column: primary },
+	)
+}
+
+/**
+ * Reads one row a storage returned, refusing a value that is not a plain record.
+ *
+ * @remarks
+ * Contract's `isRecord` decides, so a class instance, an array, or a primitive that a custom
+ * `DatabaseStorageInterface` returns raises rather than reading as a miss or dropping.
+ *
+ * @param table - The table the row came from
+ * @param row - The row as the storage returned it
+ * @returns The row, narrowed to a record
+ * @throws An `INVALID` {@link RelationError} naming `table` when `row` is not a plain record
+ *
+ * @example
+ * ```ts
+ * readRow('accounts', { id: 'acc1' }) // { id: 'acc1' }
+ * ```
+ */
+export function readRow<T>(table: string, row: T): T & Row {
+	if (isRecord(row)) return row
+	throw new RelationError(
+		'INVALID',
+		`Table ${renderPath([table])} returned a row that is not a plain record; a storage must return plain record rows`,
+		{ table },
+	)
 }
 
 /**
@@ -58,112 +128,123 @@ export function validateRelationTable(
  * A `string` is a `belongs` (foreign-key column on this table); a `readonly string[]`
  * is a `many` (foreign-key column on the related table); a {@link RelationDescriptor}
  * uses its explicit `relationship`, or infers it from the fields present. The target
- * model defaults to the relation name. Every column the resolved arm declares is
- * validated here, which is what lets each arm declare its columns required.
+ * model defaults to the relation name. A descriptor must pass `relationDescriptorContract`'s
+ * strict guard: an enumerable, string-keyed undeclared member, a member holding another type, and
+ * a member present as `undefined` each refuse it, and no lossless repair admits it. The
+ * refusal carries the contract's audit faults, described against its schema. Every column the resolved arm declares is validated here, which is
+ * what lets each arm declare its columns required.
  *
  * @param name - The relation name (its key in the {@link RelationMap})
  * @param value - The raw relation value
  * @returns The resolved relation, on the arm its `relationship` names
- * @throws An `INVALID` {@link RelationError} when the relationship cannot be resolved, or when a
- *   column the resolved arm declares is missing
+ * @throws An `INVALID` {@link RelationError} when the relationship cannot be resolved, when the
+ *   descriptor fails its contract (the faults ride on `context.faults`), or when a column the
+ *   resolved arm declares is missing
+ *
+ * @example
+ * ```ts
+ * resolveRelation('classification', belongsTo('classificationId', 'classifications')).relationship // 'belongs'
+ * ```
  */
 export function resolveRelation(name: string, value: Relation): ResolvedRelation {
 	if (isString(value)) {
 		return { relationship: 'belongs', name, model: name, column: value }
 	}
+	const path = renderPath([name])
 	if (isArray(value)) {
 		const key = value[0]
 		if (!isString(key)) {
 			throw new RelationError(
 				'INVALID',
-				`Relation '${name}': array form needs a string FK column`,
-				{
-					relation: name,
-				},
+				`Relation ${path}: the array form needs a foreign-key column string first, such as ['accountId']`,
+				{ relation: name },
 			)
 		}
 		return { relationship: 'many', name, model: name, key }
 	}
-	if (!isRelationDescriptor(value)) {
-		throw new RelationError('INVALID', `Relation '${name}': not a string, array, or descriptor`, {
-			relation: name,
-		})
+	if (!relationDescriptorContract.is(value)) {
+		// The audit runs only after the strict guard refused, so no repair ever admits a descriptor.
+		const faults = relationDescriptorContract.audit(value)
+		throw new RelationError(
+			'INVALID',
+			`Relation ${path}: expected a column string, a [key] array, or a relation descriptor\n${describeFaults(faults, relationDescriptorContract.schema)}`,
+			{ relation: name, faults },
+		)
 	}
-
-	const model = value.model ?? name
+	const descriptor = value
+	const model = descriptor.model ?? name
 	// Inferred from the fields present when no explicit `relationship` is set.
 	const relationship: Relationship | undefined =
-		value.relationship !== undefined
-			? value.relationship
-			: isDefined(value.through)
+		descriptor.relationship !== undefined
+			? descriptor.relationship
+			: isDefined(descriptor.through)
 				? 'through'
-				: isDefined(value.tag)
+				: isDefined(descriptor.tag)
 					? 'morph'
-					: isDefined(value.column)
+					: isDefined(descriptor.column)
 						? 'belongs'
-						: isDefined(value.key)
+						: isDefined(descriptor.key)
 							? 'one'
 							: undefined
 	if (relationship === undefined) {
 		throw new RelationError(
 			'INVALID',
-			`Relation '${name}': cannot infer relationship from descriptor`,
+			`Relation ${path}: cannot infer the relationship; set relationship, or give column (belongs), key (one), through (through), or tag (morph)`,
 			{ relation: name },
 		)
 	}
 
 	switch (relationship) {
 		case 'belongs': {
-			const column = value.column
+			const column = descriptor.column
 			if (column === undefined) {
-				throw new RelationError('INVALID', `Relation '${name}': belongs needs 'column'`, {
-					relation: name,
-				})
+				throw new RelationError(
+					'INVALID',
+					`Relation ${path}: a belongs relation needs column; build it with belongsTo(column)`,
+					{ relation: name },
+				)
 			}
 			return { relationship, name, model, column }
 		}
 		case 'many': {
-			const key = value.key
+			const key = descriptor.key
 			if (key === undefined) {
-				throw new RelationError('INVALID', `Relation '${name}': many needs 'key'`, {
-					relation: name,
-				})
+				throw new RelationError(
+					'INVALID',
+					`Relation ${path}: a many relation needs key; build it with hasMany(key)`,
+					{ relation: name },
+				)
 			}
 			return { relationship, name, model, key }
 		}
 		case 'one': {
-			const key = value.key
+			const key = descriptor.key
 			if (key === undefined) {
-				throw new RelationError('INVALID', `Relation '${name}': one needs 'key'`, {
-					relation: name,
-				})
+				throw new RelationError(
+					'INVALID',
+					`Relation ${path}: a one relation needs key; build it with hasOne(key)`,
+					{ relation: name },
+				)
 			}
 			return { relationship, name, model, key }
 		}
 		case 'through': {
-			const { through, source, target } = value
+			const { through, source, target } = descriptor
 			if (through === undefined || source === undefined || target === undefined) {
 				throw new RelationError(
 					'INVALID',
-					`Relation '${name}': through needs 'through', 'source', and 'target'`,
+					`Relation ${path}: a through relation needs through, source, and target; build it with hasThrough(through, source, target)`,
 					{ relation: name },
 				)
 			}
-			return {
-				relationship,
-				name,
-				model,
-				through,
-				source,
-				target,
-			}
+			return { relationship, name, model, through, source, target }
 		}
 		case 'morph': {
-			const { key, tag, label } = value
+			const { key, tag, label } = descriptor
 			if (key === undefined || tag === undefined || label === undefined) {
 				throw new RelationError(
 					'INVALID',
-					`Relation '${name}': morph needs 'key', 'tag', and 'label'`,
+					`Relation ${path}: a morph relation needs key, tag, and label; build it with hasMorph(key, tag, label)`,
 					{ relation: name },
 				)
 			}
@@ -187,24 +268,24 @@ export function resolveRelationMap(relations: RelationMap): ReadonlyMap<string, 
 // === Row projection
 
 /**
- * Reads one column off any record, whatever its declared type.
+ * Computes the junction row's primary key for one pair of a `through` relation.
  *
  * @remarks
- * A base row's type is closed, so the column is read with `Reflect.get` rather than
- * index access. Anything that is not an object reads as `undefined`.
+ * The key is the JSON text of `[key, target]`, so each pair has one key and a string key
+ * stays apart from the number it spells. `link` inserts under this key and `unlink` removes
+ * it, which is why a junction's primary column must store text.
  *
- * @param record - The record to read
- * @param column - The column name
- * @returns The column's value, or `undefined` when `record` is not an object
+ * @param key - The owning record's primary key
+ * @param target - The related record's primary key
+ * @returns The pair's junction key
  *
  * @example
  * ```ts
- * readColumn({ accountId: 'acc1' }, 'accountId') // 'acc1'
+ * computeLinkKey('acc1', 'rep1') // '["acc1","rep1"]'
  * ```
  */
-export function readColumn(record: unknown, column: string): unknown {
-	if (!isObject(record)) return undefined
-	return Reflect.get(record, column)
+export function computeLinkKey(key: Key, target: Key): string {
+	return JSON.stringify([key, target])
 }
 
 /**
@@ -234,7 +315,7 @@ export function countAttached(values: ReadonlyArray<Row | readonly Row[] | undef
  * Indexes rows by the string form of one column, for keyed lookups.
  *
  * @remarks
- * The column is read with {@link readColumn} and its value stringified, so a numeric
+ * The column is read with `resolveField` and its value stringified, so a numeric
  * and a string foreign key meet at the same entry. A later row with a key an earlier
  * row already holds replaces it, and a row missing the column indexes under the string
  * `'undefined'`. This is the projection a `belongs` load and a `through` load use to
@@ -259,7 +340,7 @@ export function indexRows(
 	return new Map(
 		Iterator.from(rows).flatMap((row, index): ReadonlyArray<readonly [string, Row]> => {
 			const value = values[index]
-			return value === undefined ? [] : [[String(readColumn(row, column)), value]]
+			return value === undefined ? [] : [[String(resolveField(row, column)), value]]
 		}),
 	)
 }
@@ -268,7 +349,7 @@ export function indexRows(
  * Groups rows by the string form of one column, for one-to-many lookups.
  *
  * @remarks
- * The column is read with {@link readColumn} and its value stringified, so a numeric
+ * The column is read with `resolveField` and its value stringified, so a numeric
  * and a string foreign key meet at the same group. Rows keep their input order inside
  * a group, a key no row carries is absent rather than empty, and a row missing the
  * column groups under the string `'undefined'`. This is the projection a `many` load
@@ -290,16 +371,17 @@ export function groupRows(
 	column: string,
 	values: readonly Row[] = rows,
 ): ReadonlyMap<string, readonly Row[]> {
-	const groups = new Map<string, Row[]>()
-	for (const [index, row] of rows.entries()) {
-		const value = values[index]
-		if (value === undefined) continue
-		const key = String(readColumn(row, column))
-		const group = groups.get(key)
-		if (group !== undefined) group.push(value)
-		else groups.set(key, [value])
-	}
-	return groups
+	const pairs = Iterator.from(rows.entries()).flatMap(
+		([index, row]): ReadonlyArray<readonly [string, Row]> => {
+			const value = values[index]
+			return value === undefined ? [] : [[String(resolveField(row, column)), value]]
+		},
+	)
+	return new Map(
+		Iterator.from(Map.groupBy(pairs, ([key]) => key)).map(
+			([key, group]): readonly [string, readonly Row[]] => [key, group.map(([, value]) => value)],
+		),
+	)
 }
 
 // === Builders

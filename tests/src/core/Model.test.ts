@@ -1,12 +1,29 @@
+import type { Row } from '@orkestrel/database'
 import type { ModelEventMap } from '@src/core'
 import type { MODEL_TABLES } from '../../setup.js'
-import { createMemoryDriver, isDatabaseError } from '@orkestrel/database'
-import { belongsTo, createRelationManager, hasMany, hasMorph, hasThrough } from '@src/core'
-import { describe, expect, it } from 'vitest'
-import { createRecorder, createRecorders } from '@orkestrel/test'
+import { integerShape, stringShape } from '@orkestrel/contract'
+import { createDatabase, createMemoryDriver, isDatabaseError } from '@orkestrel/database'
+import { createSQLiteDriver } from '@orkestrel/database/server'
 import {
+	belongsTo,
+	computeLinkKey,
+	createRelationManager,
+	hasMany,
+	hasMorph,
+	hasThrough,
+} from '@src/core'
+import { describe, expect, it } from 'vitest'
+import {
+	captureProduction,
+	createRecorder,
+	createRecorders,
+	invokeUnchecked,
+} from '@orkestrel/test'
+import {
+	EntityRow,
 	FaultDriver,
 	STORAGE_RELATIONS,
+	createLoadFixture,
 	createStorageFixture,
 	one,
 	rows,
@@ -15,7 +32,7 @@ import {
 } from '../../setup.js'
 
 describe('Model — transaction storage', () => {
-	it('T2 commits nested reads, custom-primary targets, links, and duplicate unlink', async () => {
+	it('T2 commits nested reads, custom-primary targets, a link, and an unlink', async () => {
 		const db = await createStorageFixture()
 		const events = createRecorder<[key: string | number, relation: string]>()
 		await db.transaction(async (storage) => {
@@ -28,7 +45,7 @@ describe('Model — transaction storage', () => {
 			await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
 			const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
 			expect(one(rows(loaded?.contacts)[0]?.account).name).toBe('Acme')
-			expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1', 'r1'])
+			expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1'])
 			await accounts.link('a1', 'reps', 'r2')
 			await accounts.unlink('a1', 'reps', 'r1')
 			expect(await accounts.links('a1', 'reps')).toEqual(['r2'])
@@ -60,7 +77,7 @@ describe('Model — transaction storage', () => {
 				await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
 				const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
 				expect(one(rows(loaded?.contacts)[0]?.account).name).toBe('Acme')
-				expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1', 'r1'])
+				expect(rows(loaded?.reps).map((row) => row.code)).toEqual(['r1'])
 				await accounts.link('a1', 'reps', 'r2')
 				await accounts.unlink('a1', 'reps', 'r1')
 				expect(await accounts.links('a1', 'reps')).toEqual(['r2'])
@@ -177,8 +194,8 @@ describe('Model — nested includes', () => {
 		const account = await manager.model('accounts').load('acc1', { reps: { id: true } })
 		expect(rows(account?.reps).map((row) => row.name)).toEqual(['Rae', 'Bo'])
 		expect(rows(account?.reps).map((row) => rows(row.id).map((junction) => junction.id))).toEqual([
-			['ar1'],
-			['ar2'],
+			[computeLinkKey('acc1', 'rep1')],
+			[computeLinkKey('acc1', 'rep2')],
 		])
 	})
 	it('T8 morph groups by the raw foreign key when a nested relation shadows it', async () => {
@@ -265,23 +282,18 @@ describe('Model — through management', () => {
 		expect(events.link.calls).toEqual([['acc1', 'reps']])
 	})
 
-	it('T4 leaves completed removals outside a transaction when a delete fails', async () => {
+	it('T4 propagates a failed remove unchanged outside a transaction and emits nothing', async () => {
 		const fault = new Error('delete boundary fault')
-		const driver = new FaultDriver(createMemoryDriver(), 2, fault)
-		const { db, accounts } = await setup(driver)
-		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
+		const { db, accounts } = await setup(new FaultDriver(createMemoryDriver(), 1, fault))
 		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
 		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toBe(fault)
-		expect(await db.table('accountReps').count()).toBe(2)
-		expect(await db.table('accountReps').get('ar1')).toBeUndefined()
-		expect(await db.table('accountReps').get('ar3')).toBeDefined()
+		expect(await db.table('accountReps').get(computeLinkKey('acc1', 'rep1'))).toBeDefined()
 		expect(events.unlink.count).toBe(0)
 	})
 
-	it('T5 restores every matching removal inside a transaction when a delete fails', async () => {
+	it('T5 keeps the pair inside a transaction when its remove fails', async () => {
 		const fault = new Error('delete boundary fault')
-		const { db, accounts } = await setup(new FaultDriver(createMemoryDriver(), 2, fault))
-		await db.table('accountReps').set({ id: 'ar3', accountId: 'acc1', repId: 'rep1' })
+		const { db, accounts } = await setup(new FaultDriver(createMemoryDriver(), 1, fault))
 		const events = createRecorder<[key: string | number, relation: string]>()
 		await expect(
 			db.transaction(async (storage) => {
@@ -294,15 +306,227 @@ describe('Model — through management', () => {
 			}),
 		).rejects.toBe(fault)
 		expect((await db.table('accountReps').records()).map((row) => row.id)).toEqual([
-			'ar1',
-			'ar2',
-			'ar3',
+			computeLinkKey('acc1', 'rep1'),
+			computeLinkKey('acc1', 'rep2'),
 		])
 		expect(events.count).toBe(0)
 	})
 })
 
+describe('Model — junction writes', () => {
+	it('links a pair through one add call under its derived key and emits link once', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
+		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		await accounts.link('acc0', 'reps', 'rep9')
+		expect(calls.calls).toEqual([['accountReps', 'add']])
+		expect(events.link.calls).toEqual([['acc0', 'reps']])
+		expect(await db.table('accountReps').get(computeLinkKey('acc0', 'rep9'))).toEqual({
+			id: computeLinkKey('acc0', 'rep9'),
+			accountId: 'acc0',
+			repId: 'rep9',
+		})
+	})
+
+	it('reads a pair the junction holds as linked: no write and no event', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
+		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		await accounts.link('acc0', 'reps', 'rep0')
+		expect(calls.calls).toEqual([
+			['accountReps', 'add'],
+			['accountReps', 'has'],
+		])
+		expect(events.link.count).toBe(0)
+		expect(await db.table('accountReps').count()).toBe(1)
+	})
+
+	it.each([
+		['MemoryDriver', () => createMemoryDriver()],
+		['SQLite', () => createSQLiteDriver({ path: ':memory:' })],
+	])(
+		'leaves one row and one link event for two concurrent links of a pair on %s',
+		async (_, driver) => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { db, accounts } = await createLoadFixture(1, 0, calls.handler, driver())
+			const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+			await Promise.all([
+				accounts.link('acc0', 'reps', 'rep9'),
+				accounts.link('acc0', 'reps', 'rep9'),
+			])
+			expect(await db.table('accountReps').count()).toBe(1)
+			expect(events.link.calls).toEqual([['acc0', 'reps']])
+			expect(calls.calls.filter(([, method]) => method === 'add')).toHaveLength(2)
+			await db.close()
+		},
+	)
+
+	it('unlinks a pair through one remove call and emits unlink once', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
+		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
+		await accounts.unlink('acc0', 'reps', 'rep0')
+		expect(calls.calls).toEqual([['accountReps', 'remove']])
+		expect(events.unlink.calls).toEqual([['acc0', 'reps']])
+		expect(await db.table('accountReps').count()).toBe(0)
+	})
+
+	it('unlinks a pair the junction does not hold without emitting', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
+		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
+		await accounts.unlink('acc0', 'reps', 'rep9')
+		expect(calls.calls).toEqual([['accountReps', 'remove']])
+		expect(events.unlink.count).toBe(0)
+		expect(await db.table('accountReps').count()).toBe(1)
+	})
+
+	it('refuses a root link while a transaction is active rather than reading it as linked', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, accounts } = await createLoadFixture(1, 0, calls.handler)
+		const refusal = await db.transaction(() =>
+			captureProduction(() => accounts.link('acc0', 'reps', 'rep9')),
+		)
+		expect(refusal.status).toBe('rejected')
+		expect(
+			refusal.status === 'rejected' && isDatabaseError(refusal.reason) && refusal.reason.code,
+		).toBe('CONFLICT')
+		expect(await db.table('accountReps').count()).toBe(0)
+	})
+
+	it('refuses a link on a settled scope with CONFLICT', async () => {
+		const { db, accounts } = await setup()
+		const scoped = await db.transaction(async (storage) =>
+			createRelationManager({ storage, relations: { accounts: accounts.relations } }).model(
+				'accounts',
+			),
+		)
+		await expect(scoped.link('acc1', 'reps', 'rep3')).rejects.toSatisfy(
+			(error: unknown) => isDatabaseError(error) && error.code === 'CONFLICT',
+		)
+		expect(await db.table('accountReps').count()).toBe(2)
+	})
+
+	it('refuses a link into a junction whose primary column is not text', async () => {
+		const db = createDatabase({
+			driver: createMemoryDriver(),
+			tables: {
+				accounts: { id: stringShape() },
+				reps: { id: stringShape() },
+				accountReps: { id: integerShape(), accountId: stringShape(), repId: stringShape() },
+			},
+		})
+		const accounts = createRelationManager({
+			storage: db,
+			relations: { accounts: { reps: hasThrough('accountReps', 'accountId', 'repId', 'reps') } },
+		}).model('accounts')
+		await expect(accounts.link('acc1', 'reps', 'rep1')).rejects.toSatisfy(
+			(error: unknown) => isDatabaseError(error) && error.code === 'VALIDATION',
+		)
+	})
+})
+
+describe('Model — foreign rows', () => {
+	it('raises INVALID naming the table when a storage returns a base row that is not a record', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { accounts } = await createLoadFixture(
+			2,
+			1,
+			calls.handler,
+			createMemoryDriver(),
+			(table, row) => (table === 'accounts' ? new EntityRow(row) : row),
+		)
+		const refusal = { code: 'INVALID', context: { table: 'accounts' } }
+		await expect(accounts.load('acc0', {})).rejects.toMatchObject(refusal)
+		await expect(accounts.load(['acc0', 'missing'], {})).rejects.toMatchObject(refusal)
+		await expect(accounts.find({})).rejects.toMatchObject(refusal)
+	})
+
+	it.each([
+		['classifications', { classification: true }],
+		['contacts', { contacts: true }],
+		['accountReps', { reps: true }],
+		['reps', { reps: true }],
+		['notes', { notes: true }],
+	])(
+		'raises INVALID naming %s when a related read returns a row that is not a record',
+		async (name, include) => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { accounts } = await createLoadFixture(
+				2,
+				1,
+				calls.handler,
+				createMemoryDriver(),
+				(table, row) => (table === name ? new EntityRow(row) : row),
+			)
+			await expect(accounts.load('acc0', include)).rejects.toMatchObject({
+				code: 'INVALID',
+				context: { table: name },
+			})
+		},
+	)
+})
+
+describe('Model — foreign rows (absent and listed)', () => {
+	// A JavaScript storage can answer a keyed read with `null`, which the declared row type
+	// refuses; `invokeUnchecked` hands the projector that value without a type assertion.
+	it.each([
+		['classifications', { classification: true }],
+		['reps', { reps: true }],
+	])('raises INVALID naming %s when a related get returns null', async (name, include) => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { accounts } = await createLoadFixture(
+			2,
+			1,
+			calls.handler,
+			createMemoryDriver(),
+			(table, row) => (table === name ? invokeUnchecked<Row>(undefined, () => null, []) : row),
+		)
+		await expect(accounts.load('acc0', include)).rejects.toMatchObject({
+			code: 'INVALID',
+			context: { table: name },
+		})
+	})
+
+	it('raises INVALID naming the junction when links reads a row that is not a record', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { accounts } = await createLoadFixture(
+			2,
+			1,
+			calls.handler,
+			createMemoryDriver(),
+			(table, row) => (table === 'accountReps' ? new EntityRow(row) : row),
+		)
+		await expect(accounts.links('acc0', 'reps')).rejects.toMatchObject({
+			code: 'INVALID',
+			context: { table: 'accountReps' },
+		})
+	})
+})
+
 describe('Model — cancellation', () => {
+	it('stops a through load between the junction read and the target read', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const controller = new AbortController()
+		const { accounts, keys } = await createLoadFixture(
+			2,
+			3,
+			calls.handler,
+			createMemoryDriver(),
+			(table, row) => {
+				if (table === 'accountReps') controller.abort('stop before the target read')
+				return row
+			},
+		)
+		await expect(
+			accounts.load(keys, { reps: true }, { signal: controller.signal }),
+		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
+		expect(calls.calls).toEqual([
+			['accounts', 'get'],
+			['accountReps', 'records'],
+		])
+	})
+
 	it('stops a population walk after the signal aborts between relations', async () => {
 		const { accounts } = await setup()
 		const controller = new AbortController()

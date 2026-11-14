@@ -1,10 +1,34 @@
 // Base test setup — environment-agnostic helpers loaded first by every
 // Vitest project (`setupFiles[0]`).
 
-import type { DriverInterface, Key, OperationOptions, Row, TableSchema } from '@orkestrel/database'
-import type { RelationManagerOptions, RelationsShape } from '@src/core'
+import type { ContractInterface, FieldPath } from '@orkestrel/contract'
+import type {
+	AggregateOperation,
+	CursorInterface,
+	DatabaseStorageInterface,
+	DriverInterface,
+	Key,
+	OperationOptions,
+	QueryInput,
+	QueryInterface,
+	Row,
+	TableEventMap,
+	TableInterface,
+	TableMap,
+	TableSchema,
+} from '@orkestrel/database'
+import type { EmitterInterface } from '@orkestrel/emitter'
+import type { RelationManagerOptions, RelationSchema } from '@src/core'
 import { integerShape, isArray, isRecord, stringShape } from '@orkestrel/contract'
-import { belongsTo, createRelationManager, hasMany, hasMorph, hasOne, hasThrough } from '@src/core'
+import {
+	belongsTo,
+	computeLinkKey,
+	createRelationManager,
+	hasMany,
+	hasMorph,
+	hasOne,
+	hasThrough,
+} from '@src/core'
 import { createDatabase, createMemoryDriver, shapeToColumnStorage } from '@orkestrel/database'
 
 // ── Relation test fixtures ────────────────────────────────────────────────────
@@ -19,7 +43,7 @@ export const INTEGRATION_TABLES = {
 } as const
 
 /** Holds the shared relation map over {@link INTEGRATION_TABLES} — `users` has many `posts`. */
-export const INTEGRATION_RELATIONS: RelationsShape<typeof INTEGRATION_TABLES> = {
+export const INTEGRATION_RELATIONS: RelationSchema<typeof INTEGRATION_TABLES> = {
 	users: { posts: hasMany('author') },
 }
 
@@ -46,7 +70,7 @@ export const MANAGER_TABLES = {
 }
 
 /** Holds the registry fixture's nested relations. */
-export const MANAGER_RELATIONS: RelationsShape<typeof MANAGER_TABLES> = {
+export const MANAGER_RELATIONS: RelationSchema<typeof MANAGER_TABLES> = {
 	accounts: { contacts: hasMany('accountId') },
 	contacts: { account: belongsTo('accountId', 'accounts') },
 }
@@ -151,8 +175,12 @@ export async function setup(
 	await db.table('reps').set({ id: 'rep1', name: 'Rae' })
 	await db.table('reps').set({ id: 'rep2', name: 'Bo' })
 	await db.table('reps').set({ id: 'rep3', name: 'Cy' })
-	await db.table('accountReps').set({ id: 'ar1', accountId: 'acc1', repId: 'rep1' })
-	await db.table('accountReps').set({ id: 'ar2', accountId: 'acc1', repId: 'rep2' })
+	await db
+		.table('accountReps')
+		.set({ id: computeLinkKey('acc1', 'rep1'), accountId: 'acc1', repId: 'rep1' })
+	await db
+		.table('accountReps')
+		.set({ id: computeLinkKey('acc1', 'rep2'), accountId: 'acc1', repId: 'rep2' })
 	await db.table('notes').set({ id: 'n1', entityId: 'acc1', entityType: 'account', body: 'kept' })
 	await db
 		.table('notes')
@@ -231,7 +259,7 @@ export const STORAGE_TABLES = {
 	junction: { id: stringShape(), accountCode: stringShape(), repCode: stringShape() },
 }
 
-/** Opens custom-primary tables with duplicate junctions for scope settlement proofs. */
+/** Opens custom-primary tables with derived-key junctions for scope settlement proofs. */
 export async function createStorageFixture() {
 	const db = createDatabase({
 		driver: createMemoryDriver(),
@@ -240,8 +268,268 @@ export async function createStorageFixture() {
 	})
 	await db.table('reps').set({ code: 'r1', name: 'Rae' })
 	await db.table('reps').set({ code: 'r2', name: 'Bo' })
-	await db.table('junction').set({ id: 'j1', accountCode: 'a1', repCode: 'r1' })
-	await db.table('junction').set({ id: 'j2', accountCode: 'a1', repCode: 'r1' })
-	await db.table('junction').set({ id: 'j3', accountCode: 'a0', repCode: 'r2' })
+	await db
+		.table('junction')
+		.set({ id: computeLinkKey('a1', 'r1'), accountCode: 'a1', repCode: 'r1' })
+	await db
+		.table('junction')
+		.set({ id: computeLinkKey('a0', 'r2'), accountCode: 'a0', repCode: 'r2' })
 	return db
+}
+
+// ── Call recording ────────────────────────────────────────────────────────────
+
+/** Receives one table call as the table's name and the method called. */
+export type TableCallHandler = (table: string, method: string) => void
+
+/** Replaces one row a table read returns, given the table's name; a test's view of a storage. */
+export type RowProjector = (table: string, row: Row) => Row
+
+/** Represents a row a custom storage returns as a class instance rather than a plain record. */
+export class EntityRow {
+	readonly [column: string]: unknown
+
+	constructor(row: Row) {
+		Object.assign(this, row)
+	}
+}
+
+/**
+ * Records every call on a real table, then forwards it; a projector, when given, replaces each row
+ * `get` and `records` return after the real read resolves.
+ */
+export class RecordingTable implements TableInterface {
+	readonly #table: TableInterface
+	readonly #record: TableCallHandler
+	readonly #project: RowProjector | undefined
+
+	constructor(table: TableInterface, record: TableCallHandler, project?: RowProjector) {
+		this.#table = table
+		this.#record = record
+		this.#project = project
+	}
+
+	get emitter(): EmitterInterface<TableEventMap> {
+		return this.#table.emitter
+	}
+
+	get name(): string {
+		return this.#table.name
+	}
+
+	get primary(): string {
+		return this.#table.primary
+	}
+
+	get contract(): ContractInterface<Row> {
+		return this.#table.contract
+	}
+
+	get(key: Key): Promise<Row | undefined>
+	get(keys: readonly Key[]): Promise<ReadonlyArray<Row | undefined>>
+	async get(keys: Key | readonly Key[]): Promise<Row | undefined | ReadonlyArray<Row | undefined>> {
+		this.#record(this.#table.name, 'get')
+		if (isArray(keys)) {
+			return (await this.#table.get(keys)).map((row) =>
+				row === undefined ? undefined : this.#view(row),
+			)
+		}
+		const row = await this.#table.get(keys)
+		return row === undefined ? undefined : this.#view(row)
+	}
+
+	resolve(key: Key): Promise<Row>
+	resolve(keys: readonly Key[]): Promise<readonly Row[]>
+	resolve(keys: Key | readonly Key[]): Promise<Row | readonly Row[]> {
+		this.#record(this.#table.name, 'resolve')
+		return isArray(keys) ? this.#table.resolve(keys) : this.#table.resolve(keys)
+	}
+
+	has(key: Key): Promise<boolean>
+	has(keys: readonly Key[]): Promise<readonly boolean[]>
+	has(keys: Key | readonly Key[]): Promise<boolean | readonly boolean[]> {
+		this.#record(this.#table.name, 'has')
+		return isArray(keys) ? this.#table.has(keys) : this.#table.has(keys)
+	}
+
+	keys(): Promise<readonly Key[]> {
+		this.#record(this.#table.name, 'keys')
+		return this.#table.keys()
+	}
+
+	async records(input?: QueryInput, options?: OperationOptions): Promise<readonly Row[]> {
+		this.#record(this.#table.name, 'records')
+		return (await this.#table.records(input, options)).map((row) => this.#view(row))
+	}
+
+	count(input?: QueryInput, options?: OperationOptions): Promise<number> {
+		this.#record(this.#table.name, 'count')
+		return this.#table.count(input, options)
+	}
+
+	aggregate(
+		operation: AggregateOperation,
+		column: FieldPath,
+		input?: QueryInput,
+		options?: OperationOptions,
+	): Promise<number | undefined> {
+		this.#record(this.#table.name, 'aggregate')
+		return this.#table.aggregate(operation, column, input, options)
+	}
+
+	scan(input?: QueryInput, options?: OperationOptions): AsyncIterable<Row> {
+		this.#record(this.#table.name, 'scan')
+		return this.#table.scan(input, options)
+	}
+
+	set(row: Row, options?: OperationOptions): Promise<Key>
+	set(rows: readonly Row[], options?: OperationOptions): Promise<readonly Key[]>
+	set(input: Row | readonly Row[], options?: OperationOptions): Promise<Key | readonly Key[]> {
+		this.#record(this.#table.name, 'set')
+		return isArray(input) ? this.#table.set(input, options) : this.#table.set(input, options)
+	}
+
+	add(row: Row, options?: OperationOptions): Promise<Key>
+	add(rows: readonly Row[], options?: OperationOptions): Promise<readonly Key[]>
+	add(input: Row | readonly Row[], options?: OperationOptions): Promise<Key | readonly Key[]> {
+		this.#record(this.#table.name, 'add')
+		return isArray(input) ? this.#table.add(input, options) : this.#table.add(input, options)
+	}
+
+	update(key: Key, changes: Partial<Row>, options?: OperationOptions): Promise<boolean>
+	update(
+		keys: readonly Key[],
+		changes: Partial<Row>,
+		options?: OperationOptions,
+	): Promise<readonly boolean[]>
+	update(
+		keys: Key | readonly Key[],
+		changes: Partial<Row>,
+		options?: OperationOptions,
+	): Promise<boolean | readonly boolean[]> {
+		this.#record(this.#table.name, 'update')
+		return isArray(keys)
+			? this.#table.update(keys, changes, options)
+			: this.#table.update(keys, changes, options)
+	}
+
+	remove(key: Key, options?: OperationOptions): Promise<boolean>
+	remove(keys: readonly Key[], options?: OperationOptions): Promise<readonly boolean[]>
+	remove(
+		keys: Key | readonly Key[],
+		options?: OperationOptions,
+	): Promise<boolean | readonly boolean[]> {
+		this.#record(this.#table.name, 'remove')
+		return isArray(keys) ? this.#table.remove(keys, options) : this.#table.remove(keys, options)
+	}
+
+	clear(): Promise<void> {
+		this.#record(this.#table.name, 'clear')
+		return this.#table.clear()
+	}
+
+	query(): QueryInterface<Row> {
+		this.#record(this.#table.name, 'query')
+		return this.#table.query()
+	}
+
+	cursor(): Promise<CursorInterface<Row>> {
+		this.#record(this.#table.name, 'cursor')
+		return this.#table.cursor()
+	}
+
+	// Apply the projector, when one was given, to one row a read returned.
+	#view(row: Row): Row {
+		return this.#project === undefined ? row : this.#project(this.#table.name, row)
+	}
+}
+
+/** Hands out a {@link RecordingTable} over each table of a real storage. */
+export class RecordingStorage implements DatabaseStorageInterface {
+	readonly #storage: DatabaseStorageInterface
+	readonly #record: TableCallHandler
+	readonly #project: RowProjector | undefined
+
+	constructor(storage: DatabaseStorageInterface, record: TableCallHandler, project?: RowProjector) {
+		this.#storage = storage
+		this.#record = record
+		this.#project = project
+	}
+
+	table(name: string): TableInterface {
+		return new RecordingTable(this.#storage.table(name), this.#record, this.#project)
+	}
+}
+
+/** Holds the load fixture's relations: every relationship, nested both ways. */
+export const LOAD_RELATIONS: RelationSchema<typeof MODEL_TABLES> = {
+	accounts: {
+		classification: belongsTo('classificationId', 'classifications'),
+		contacts: hasMany('accountId'),
+		profile: hasOne('accountId', 'profiles'),
+		reps: hasThrough('accountReps', 'accountId', 'repId', 'reps'),
+		notes: hasMorph('entityId', 'entityType', 'account', 'notes'),
+	},
+	contacts: { account: belongsTo('accountId', 'accounts') },
+	reps: { accounts: hasThrough('accountReps', 'repId', 'accountId', 'accounts') },
+}
+
+/**
+ * Opens the loading fixture with `parents` accounts, each holding `related` rows of every
+ * relationship, behind a storage that reports every table call to `record` and passes each
+ * row it reads through `project` when one is given.
+ */
+export async function createLoadFixture(
+	parents: number,
+	related: number,
+	record: TableCallHandler,
+	driver: DriverInterface = createMemoryDriver(),
+	project?: RowProjector,
+) {
+	const db = createDatabase({ driver, tables: MODEL_TABLES })
+	const accounts = Array.from({ length: parents }, (_, index) => `acc${index}`)
+	const items = Array.from({ length: related }, (_, index) => index)
+	await db.table('classifications').set({ id: 'cls1', label: 'Commercial' })
+	await db.table('reps').set(items.map((item) => ({ id: `rep${item}`, name: `Rep ${item}` })))
+	await db
+		.table('accounts')
+		.set(accounts.map((id) => ({ id, name: `Account ${id}`, classificationId: 'cls1' })))
+	await db
+		.table('contacts')
+		.set(
+			accounts.flatMap((id) =>
+				items.map((item) => ({ id: `${id}-con${item}`, accountId: id, email: `${item}@x.com` })),
+			),
+		)
+	await db
+		.table('profiles')
+		.set(
+			accounts.flatMap((id) =>
+				items.map((item) => ({ id: `${id}-pro${item}`, accountId: id, bio: 'bio' })),
+			),
+		)
+	await db.table('accountReps').set(
+		accounts.flatMap((id) =>
+			items.map((item) => ({
+				id: computeLinkKey(id, `rep${item}`),
+				accountId: id,
+				repId: `rep${item}`,
+			})),
+		),
+	)
+	await db.table('notes').set(
+		accounts.flatMap((id) =>
+			items.map((item) => ({
+				id: `${id}-note${item}`,
+				entityId: id,
+				entityType: 'account',
+				body: 'kept',
+			})),
+		),
+	)
+	const manager = createRelationManager<TableMap>({
+		storage: new RecordingStorage(db, record, project),
+		relations: LOAD_RELATIONS,
+	})
+	return { db, keys: accounts, accounts: manager.model('accounts') }
 }

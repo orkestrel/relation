@@ -17,9 +17,14 @@ describe('isRelationDescriptor', () => {
 		expect(isRelationDescriptor(hasMorph('entityId', 'entityType', 'account', 'notes'))).toBe(true)
 	})
 
-	it('accepts an empty record and one carrying a member it does not declare', () => {
+	it('accepts an empty record', () => {
 		expect(isRelationDescriptor({})).toBe(true)
-		expect(isRelationDescriptor({ column: 'accountId', comment: 'hand written' })).toBe(true)
+	})
+
+	it('refuses a record carrying a member the descriptor does not declare', () => {
+		expect(isRelationDescriptor({ column: 'accountId', comment: 'hand written' })).toBe(false)
+		expect(isRelationDescriptor({ comment: 'hand written' })).toBe(false)
+		expect(isRelationDescriptor({ ...hasMany('accountId'), cascade: true })).toBe(false)
 	})
 
 	it('refuses a member declared a string that holds another type', () => {

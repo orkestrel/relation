@@ -2,6 +2,7 @@
 // this repo's own `guides/README.md` manifest. The constants that follow are this
 // package's own, as is the executed section that closes the file.
 
+import type { Include } from '@src/core'
 import { GuideCommand } from '@orkestrel/guide/server'
 import { readInventory } from '@orkestrel/test/server'
 import { createVitest } from 'vitest/node'
@@ -47,7 +48,8 @@ await new GuideCommand({
 		resolveLink,
 	} = await import('@orkestrel/guide')
 	const { createDatabase, createMemoryDriver } = await import('@orkestrel/database')
-	const { captureError, readProperty, requireValue } = await import('@orkestrel/test')
+	const { captureError, createRecorder, readProperty, requireValue } =
+		await import('@orkestrel/test')
 	const {
 		belongsTo,
 		createRelationManager,
@@ -59,7 +61,7 @@ await new GuideCommand({
 		resolveRelationMap,
 	} = await import('@src/core')
 	const { describe, expect, it } = await import('vitest')
-	const { MODEL_TABLES } = await import('./setup.js')
+	const { MODEL_TABLES, createLoadFixture, one, rows: related } = await import('./setup.js')
 	const sources = createSourceManager({ files, modules: MODULES })
 	const own = requireValue(
 		rows.find((row) => row.entry.spec === GUIDE_SPEC),
@@ -277,6 +279,89 @@ await new GuideCommand({
 			const error = captureError(() => resolveRelation('bad', {}))
 			expect(isRelationError(error)).toBe(true)
 			expect(readProperty(error, 'code')).toBe('INVALID')
+		})
+
+		// Invariant 3, "Batch loading — no N+1": every table call a load makes, read on a storage
+		// that records each call on the real tables. The fixture holds many related rows of every
+		// relationship per parent, so a per-parent or per-row read would show as extra calls.
+		it('reads each direct relation with one call and each through with two, at every nesting level', async () => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { accounts, keys } = await createLoadFixture(20, 25, calls.handler)
+			const cases: ReadonlyArray<readonly [Include, ReadonlyArray<readonly [string, string]>]> = [
+				[{ classification: true }, [['classifications', 'get']]],
+				[{ contacts: true }, [['contacts', 'records']]],
+				[{ profile: true }, [['profiles', 'records']]],
+				[{ notes: true }, [['notes', 'records']]],
+				[
+					{ reps: true },
+					[
+						['accountReps', 'records'],
+						['reps', 'get'],
+					],
+				],
+				[
+					{ contacts: { account: true } },
+					[
+						['contacts', 'records'],
+						['accounts', 'get'],
+					],
+				],
+				[
+					{ reps: { accounts: true } },
+					[
+						['accountReps', 'records'],
+						['reps', 'get'],
+						['accountReps', 'records'],
+						['accounts', 'get'],
+					],
+				],
+				[
+					{ contacts: { account: { reps: { accounts: true } } } },
+					[
+						['contacts', 'records'],
+						['accounts', 'get'],
+						['accountReps', 'records'],
+						['reps', 'get'],
+						['accountReps', 'records'],
+						['accounts', 'get'],
+					],
+				],
+			]
+			for (const [include, expected] of cases) {
+				calls.clear()
+				const loaded = await accounts.load(keys, include)
+				expect(loaded).toHaveLength(20)
+				expect(calls.calls).toEqual([['accounts', 'get'], ...expected])
+			}
+		})
+
+		// The control for the preceding proof: the recorder sees one call per read, so a load made
+		// once per parent shows twice the calls per parent.
+		it('counts a per-parent load as one get and one relation read per parent', async () => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { accounts, keys } = await createLoadFixture(20, 25, calls.handler)
+			for (const key of keys) await accounts.load(key, { classification: true })
+			expect(calls.count).toBe(40)
+		})
+
+		it('returns every related row of every loaded parent, with limit bounding the parents', async () => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { accounts } = await createLoadFixture(20, 25, calls.handler)
+			const page = await accounts.find({ contacts: true }, { sort: 'id', limit: 2 })
+			expect(page.map((account) => account.id)).toEqual(['acc0', 'acc1'])
+			expect(page.map((account) => related(account.contacts).length)).toEqual([25, 25])
+		})
+
+		it('reads every match of a one relationship and keeps one', async () => {
+			const calls = createRecorder<[table: string, method: string]>()
+			const { accounts, db } = await createLoadFixture(1, 25, calls.handler)
+			const account = await accounts.load('acc0', { profile: true })
+			expect(calls.calls).toEqual([
+				['accounts', 'get'],
+				['profiles', 'records'],
+			])
+			expect(await db.table('profiles').count()).toBe(25)
+			expect(one(account?.profile).id).toBe('acc0-pro0')
 		})
 
 		it('lists the tables carrying relations and reports membership', () => {

@@ -1,11 +1,14 @@
 import type { Row } from '@orkestrel/database'
 import { compileGuard } from '@orkestrel/contract'
-import { shapeToColumnStorage } from '@orkestrel/database'
+import { createDatabase, createMemoryDriver, shapeToColumnStorage } from '@orkestrel/database'
+import { createRecorder } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
 import {
 	FaultDriver,
 	INTEGRATION_RELATIONS,
 	INTEGRATION_TABLES,
+	RecordingStorage,
+	createLoadFixture,
 	openFixtureDriver,
 } from './setup.js'
 
@@ -119,5 +122,38 @@ describe('FaultDriver', () => {
 		expect(() => faulted.delete('posts', 'p3')).toThrow('FaultDriver delete failure')
 		expect(await inner.keys('posts')).toEqual(['p2', 'p3'])
 		await faulted.close()
+	})
+})
+
+describe('RecordingStorage', () => {
+	it('records each table call and forwards it to the real table', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const inner = createDatabase({ driver: createMemoryDriver(), tables: INTEGRATION_TABLES })
+		const users = new RecordingStorage(inner, calls.handler).table('users')
+		await users.add({ id: 'u1', name: 'Ada', age: 36 })
+		expect(await users.get(['u1', 'u2'])).toEqual([{ id: 'u1', name: 'Ada', age: 36 }, undefined])
+		expect(await users.remove('u1')).toBe(true)
+		expect(await inner.table('users').count()).toBe(0)
+		expect(calls.calls).toEqual([
+			['users', 'add'],
+			['users', 'get'],
+			['users', 'remove'],
+		])
+	})
+})
+
+describe('createLoadFixture', () => {
+	it('seeds the parents and every relationship each holds, unrecorded', async () => {
+		const calls = createRecorder<[table: string, method: string]>()
+		const { db, keys } = await createLoadFixture(3, 4, calls.handler)
+		expect(keys).toEqual(['acc0', 'acc1', 'acc2'])
+		expect(await db.table('contacts').count()).toBe(12)
+		expect(await db.table('accountReps').count()).toBe(12)
+		expect(await db.table('accountReps').get('["acc2","rep3"]')).toEqual({
+			id: '["acc2","rep3"]',
+			accountId: 'acc2',
+			repId: 'rep3',
+		})
+		expect(calls.count).toBe(0)
 	})
 })

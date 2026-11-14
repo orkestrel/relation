@@ -1,5 +1,6 @@
 import {
 	belongsTo,
+	computeLinkKey,
 	countAttached,
 	groupRows,
 	hasMany,
@@ -7,18 +8,20 @@ import {
 	hasOne,
 	hasThrough,
 	indexRows,
+	readRow,
 	isRelationDescriptor,
 	isRelationError,
-	readColumn,
 	RelationError,
 	resolveRelation,
 	resolveRelationMap,
+	validateRelationJunction,
 	validateRelationTable,
 } from '@src/core'
 import { createDatabase, createMemoryDriver } from '@orkestrel/database'
-import { captureError, readProperty } from '@orkestrel/test'
+import { FAULT_TEXT_LIMIT } from '@orkestrel/contract'
+import { captureError, invokeUnchecked, readProperty } from '@orkestrel/test'
 import { describe, expect, it } from 'vitest'
-import { MANAGER_TABLES } from '../../setup.js'
+import { EntityRow, MANAGER_TABLES } from '../../setup.js'
 
 describe('validateRelationTable', () => {
 	it('resolves a declared target without performing a data operation', () => {
@@ -34,7 +37,9 @@ describe('validateRelationTable', () => {
 			expect.objectContaining({
 				code: 'INVALID',
 				context: { model: 'accounts', relation: 'contacts', table: 'missing' },
-				message: `Model 'accounts' relation 'contacts' ${junction ? 'uses undeclared junction' : 'targets undeclared table'} 'missing'`,
+				message: junction
+					? "Relation accounts.contacts uses undeclared junction missing; declare it in the database's tables or correct the relation's through"
+					: "Relation accounts.contacts targets undeclared table missing; declare it in the database's tables or correct the relation's model",
 			}),
 		)
 	})
@@ -141,19 +146,77 @@ describe('resolveRelation — raw descriptor inference', () => {
 		)
 	})
 
-	// A relation map read from JSON is where a wrong-typed member arrives, and it is the reach
-	// `isRelationDescriptor` guards: a number `column` resolved as a `belongs` would produce a
-	// `ResolvedBelongs` whose `column` is declared a string, and the load would silently attach
-	// nothing instead of reporting the malformed definition. No literal typed `Relation` can hold a
-	// wrong-typed member — the type checker refuses it — so a parsed value never reaches
-	// `resolveRelation` at all; the guard's refusal is the proof.
-	it('refuses a descriptor whose member holds the wrong type', () => {
-		const column: unknown = JSON.parse('{"column": 42}')
-		const through: unknown = JSON.parse('{"through": 7, "source": "s", "target": "t"}')
-		const relationship: unknown = JSON.parse('{"relationship": "sideways", "column": "aId"}')
-		expect(isRelationDescriptor(column)).toBe(false)
-		expect(isRelationDescriptor(through)).toBe(false)
-		expect(isRelationDescriptor(relationship)).toBe(false)
+	// A relation map read from JSON or written in JavaScript reaches `resolveRelation` with members
+	// the `Relation` type refuses at compile time, so these cases call it through
+	// `invokeUnchecked`. Each value is one contract's lossless repairs would admit; the strict
+	// guard refuses it instead, and the audit's faults name the member.
+	it.each([
+		[{ column: 42 }, { reason: 'type', path: ['column'], expected: 'string', received: '42' }],
+		[
+			{ relationship: ' belongs ', column: 'accountId' },
+			{ reason: 'type', path: ['relationship'], expected: 'literal', received: '" belongs "' },
+		],
+		[
+			{ key: 'accountId', column: undefined },
+			{ reason: 'type', path: ['column'], expected: 'string', received: 'undefined' },
+		],
+	])('refuses %o rather than repairing it', (descriptor, fault) => {
+		const error = captureError(() =>
+			invokeUnchecked(undefined, resolveRelation, ['contacts', descriptor]),
+		)
+		expect(isRelationError(error)).toBe(true)
+		expect(readProperty(error, 'code')).toBe('INVALID')
+		expect(readProperty(readProperty(error, 'context'), 'faults')).toEqual([fault])
+	})
+
+	it('refuses a descriptor whose member holds the wrong type, through the guard', () => {
+		expect(isRelationDescriptor({ through: 7, source: 's', target: 't' })).toBe(false)
+		expect(isRelationDescriptor({ relationship: 'sideways', column: 'aId' })).toBe(false)
+	})
+
+	it('refuses a descriptor carrying a member it does not declare, naming the member', () => {
+		const descriptor = { key: 'accountId', comment: 'hand written' }
+		const error = captureError(() => resolveRelation('contacts', descriptor))
+		expect(isRelationError(error)).toBe(true)
+		expect(readProperty(error, 'code')).toBe('INVALID')
+		expect(readProperty(error, 'message')).toBe(
+			`Relation contacts: expected a column string, a [key] array, or a relation descriptor\ncomment: extra; this key is not declared, remove it or use a declared key: relationship, column, key, through, source, target, tag, label, model\nsend {"relationship"?: "belongs" | "many" | "one" | "through" | "morph", "column"?: string, "key"?: string, "through"?: string, "source"?: string, "target"?: string…`,
+		)
+		expect(readProperty(readProperty(error, 'context'), 'faults')).toEqual([
+			{ reason: 'extra', path: ['comment'] },
+		])
+	})
+
+	it('lists the relationship candidates when the relationship is outside the union', () => {
+		const error = captureError(() =>
+			invokeUnchecked(undefined, resolveRelation, ['contacts', { relationship: 'sideways' }]),
+		)
+		expect(readProperty(error, 'message')).toBe(
+			`Relation contacts: expected a column string, a [key] array, or a relation descriptor\nrelationship: type; expected literal; received "sideways"; send one of "belongs", "many", "one", "through", "morph"\nsend {"relationship"?: "belongs" | "many" | "one" | "through" | "morph", "column"?: string, "key"?: string, "through"?: string, "source"?: string, "target"?: string…`,
+		)
+	})
+
+	it('keeps a refusal naming several long undeclared members within the fault text bound', () => {
+		const descriptor = Object.fromEntries(
+			Array.from({ length: 30 }, (_, index) => [`member${index}${'x'.repeat(400)}`, index]),
+		)
+		const error = captureError(() =>
+			invokeUnchecked(undefined, resolveRelation, ['contacts', descriptor]),
+		)
+		const message: string = readProperty(error, 'message')
+		expect(
+			message.startsWith(
+				`Relation contacts: expected a column string, a [key] array, or a relation descriptor\n"member0x`,
+			),
+		).toBe(true)
+		expect(message.length).toBeLessThanOrEqual(85 + FAULT_TEXT_LIMIT)
+	})
+
+	it('bounds a caller-supplied relation name in the refusal', () => {
+		const error = captureError(() => resolveRelation(`a b${'x'.repeat(500)}`, {}))
+		const message: string = readProperty(error, 'message')
+		expect(message.startsWith('Relation "a b')).toBe(true)
+		expect(message.length).toBeLessThan(260)
 	})
 
 	it('reports INVALID as the code of the error an unresolvable descriptor throws', () => {
@@ -175,16 +238,65 @@ describe('resolveRelationMap', () => {
 	})
 })
 
-describe('readColumn', () => {
-	it('projects a column off a record', () => {
-		expect(readColumn({ accountId: 'acc1' }, 'accountId')).toBe('acc1')
+describe('validateRelationJunction', () => {
+	const reps = resolveRelation('reps', hasThrough('accountReps', 'accountId', 'repId'))
+
+	it('passes a junction keyed by a column of its own', () => {
+		if (reps.relationship !== 'through') throw new Error('reps must resolve onto the through arm')
+		expect(validateRelationJunction('accounts', reps, 'id')).toBeUndefined()
 	})
 
-	it('reads a missing column and a non-object as undefined', () => {
-		expect(readColumn({ accountId: 'acc1' }, 'missing')).toBeUndefined()
-		expect(readColumn(null, 'accountId')).toBeUndefined()
-		expect(readColumn('acc1', 'accountId')).toBeUndefined()
-		expect(readColumn(undefined, 'accountId')).toBeUndefined()
+	it.each([
+		['source', 'accountId'],
+		['target', 'repId'],
+	])('refuses a junction keyed by its %s column', (role, column) => {
+		if (reps.relationship !== 'through') throw new Error('reps must resolve onto the through arm')
+		expect(() => validateRelationJunction('accounts', reps, column)).toThrow(
+			expect.objectContaining({
+				code: 'INVALID',
+				message: `Relation accounts.reps keys its junction accountReps by its ${role} column ${column}; give the junction a separate text primary column, which link fills with computeLinkKey`,
+				context: { model: 'accounts', relation: 'reps', table: 'accountReps', column },
+			}),
+		)
+	})
+})
+
+describe('readRow', () => {
+	it('returns a plain record row as given', () => {
+		const row = { id: 'acc1' }
+		expect(readRow('accounts', row)).toBe(row)
+		const bare = Object.assign(Object.create(null), { id: 'acc1' })
+		expect(readRow('accounts', bare)).toBe(bare)
+	})
+
+	it.each([new EntityRow({ id: 'acc1' }), ['acc1'], 'acc1', null, 42])(
+		'refuses %o with INVALID naming the table',
+		(row) => {
+			expect(() => readRow('accounts', row)).toThrow(
+				expect.objectContaining({
+					code: 'INVALID',
+					message:
+						'Table accounts returned a row that is not a plain record; a storage must return plain record rows',
+					context: { table: 'accounts' },
+				}),
+			)
+		},
+	)
+})
+
+describe('computeLinkKey', () => {
+	it('derives the JSON text of the pair', () => {
+		expect(computeLinkKey('acc1', 'rep1')).toBe('["acc1","rep1"]')
+		expect(JSON.parse(computeLinkKey('acc1', 'rep1'))).toEqual(['acc1', 'rep1'])
+	})
+
+	it('keeps the order of the pair and a string key apart from the number it spells', () => {
+		expect(computeLinkKey('rep1', 'acc1')).not.toBe(computeLinkKey('acc1', 'rep1'))
+		expect(computeLinkKey(1, 'rep1')).not.toBe(computeLinkKey('1', 'rep1'))
+	})
+
+	it('keeps a key carrying the separator apart from a split pair', () => {
+		expect(computeLinkKey('a","b', 'c')).not.toBe(computeLinkKey('a', 'b","c'))
 	})
 })
 
