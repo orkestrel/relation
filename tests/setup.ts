@@ -105,22 +105,71 @@ export class FaultDriver implements DriverInterface {
 		return this.#driver.close()
 	}
 
-	read(table: string, key: Key): Promise<Row | undefined> {
-		return this.#driver.read(table, key)
+	read(table: string, key: Key): Promise<Row | undefined>
+	read(table: string, keys: readonly Key[]): Promise<ReadonlyArray<Row | undefined>>
+	read(
+		table: string,
+		keys: Key | readonly Key[],
+	): Promise<Row | undefined | ReadonlyArray<Row | undefined>> {
+		return isArray(keys) ? this.#driver.read(table, keys) : this.#driver.read(table, keys)
 	}
 
-	write(table: string, key: Key, row: Row, options?: OperationOptions): Promise<void> {
-		return this.#driver.write(table, key, row, options)
+	write(
+		table: string,
+		keys: readonly Key[],
+		rows: readonly Row[],
+		options?: OperationOptions,
+	): Promise<void>
+	write(table: string, key: Key, row: Row, options?: OperationOptions): Promise<void>
+	write(
+		table: string,
+		keys: Key | readonly Key[],
+		values: Row | readonly Row[],
+		options?: OperationOptions,
+	): Promise<void> {
+		if (isArray(keys) && isArray(values)) return this.#driver.write(table, keys, values, options)
+		if (!isArray(keys) && !isArray(values)) return this.#driver.write(table, keys, values, options)
+		return Promise.reject(
+			new TypeError('FaultDriver write: keys and rows must both be arrays or both be single'),
+		)
 	}
 
-	insert(table: string, key: Key, row: Row, options?: OperationOptions): Promise<void> {
-		return this.#driver.insert(table, key, row, options)
+	insert(
+		table: string,
+		keys: readonly Key[],
+		rows: readonly Row[],
+		options?: OperationOptions,
+	): Promise<void>
+	insert(table: string, key: Key, row: Row, options?: OperationOptions): Promise<void>
+	insert(
+		table: string,
+		keys: Key | readonly Key[],
+		values: Row | readonly Row[],
+		options?: OperationOptions,
+	): Promise<void> {
+		if (isArray(keys) && isArray(values)) return this.#driver.insert(table, keys, values, options)
+		if (!isArray(keys) && !isArray(values)) return this.#driver.insert(table, keys, values, options)
+		return Promise.reject(
+			new TypeError('FaultDriver insert: keys and rows must both be arrays or both be single'),
+		)
 	}
 
-	delete(table: string, key: Key, options?: OperationOptions): Promise<boolean> {
+	delete(table: string, key: Key, options?: OperationOptions): Promise<boolean>
+	delete(
+		table: string,
+		keys: readonly Key[],
+		options?: OperationOptions,
+	): Promise<readonly boolean[]>
+	delete(
+		table: string,
+		keys: Key | readonly Key[],
+		options?: OperationOptions,
+	): Promise<boolean | readonly boolean[]> {
 		this.#calls += 1
 		if (this.#calls >= this.#after) throw this.#fault
-		return this.#driver.delete(table, key, options)
+		return isArray(keys)
+			? this.#driver.delete(table, keys, options)
+			: this.#driver.delete(table, keys, options)
 	}
 
 	keys(table: string): Promise<readonly Key[]> {
@@ -133,10 +182,6 @@ export class FaultDriver implements DriverInterface {
 
 	clear(table: string): Promise<void> {
 		return this.#driver.clear(table)
-	}
-
-	snapshot(tables?: readonly string[]): Promise<() => Promise<void>> {
-		return this.#driver.snapshot(tables)
 	}
 }
 
@@ -414,11 +459,8 @@ export class RecordingTable implements TableInterface {
 	}
 
 	remove(key: Key, options?: OperationOptions): Promise<boolean>
-	remove(keys: readonly Key[], options?: OperationOptions): Promise<readonly boolean[]>
-	remove(
-		keys: Key | readonly Key[],
-		options?: OperationOptions,
-	): Promise<boolean | readonly boolean[]> {
+	remove(keys: readonly Key[], options?: OperationOptions): Promise<boolean>
+	remove(keys: Key | readonly Key[], options?: OperationOptions): Promise<boolean> {
 		this.#record(this.#table.name, 'remove')
 		return isArray(keys) ? this.#table.remove(keys, options) : this.#table.remove(keys, options)
 	}

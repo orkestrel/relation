@@ -89,11 +89,20 @@ describe('FaultDriver', () => {
 			scanned.push(row)
 		}
 		expect(scanned).toEqual([{ id: 'p1', author: 'u1', title: 'First' }])
-		const restore = await faulted.snapshot(['users'])
+		await faulted.insert(
+			'users',
+			['u2', 'u3'],
+			[
+				{ id: 'u2', name: 'Bo', age: 40 },
+				{ id: 'u3', name: 'Cy', age: 41 },
+			],
+		)
+		expect(await inner.read('users', ['u2', 'u3'])).toEqual([
+			{ id: 'u2', name: 'Bo', age: 40 },
+			{ id: 'u3', name: 'Cy', age: 41 },
+		])
 		await faulted.clear('users')
 		expect(await inner.keys('users')).toEqual([])
-		await restore()
-		expect(await inner.keys('users')).toEqual(['u1'])
 		await faulted.close()
 	})
 
