@@ -24,7 +24,14 @@ import type {
 } from './types.js'
 import { checkAbort, extractKey, isDatabaseError, isKey } from '@orkestrel/database'
 import { Emitter } from '@orkestrel/emitter'
-import { isArray, isBoolean, isDefined, renderPath, resolveField } from '@orkestrel/contract'
+import {
+	isArray,
+	isBoolean,
+	isDefined,
+	renderPath,
+	resolveField,
+	settle,
+} from '@orkestrel/contract'
 import { computeLinkKey, countAttached, groupRows, indexRows, readRow } from './helpers.js'
 import { RelationError } from './errors.js'
 
@@ -208,12 +215,14 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const resolved = this.#through(relation)
 		const junction = this.#storage.table(resolved.through)
 		const id = computeLinkKey(key, target)
-		try {
-			await junction.add(
+		const outcome = await settle(() =>
+			junction.add(
 				{ [junction.primary]: id, [resolved.source]: key, [resolved.target]: target },
 				options,
-			)
-		} catch (error) {
+			),
+		)
+		if (!outcome.success) {
+			const error = outcome.error
 			// A busy or settled scope raises CONFLICT too, so only a held pair reads as linked.
 			if (isDatabaseError(error) && error.code === 'CONFLICT' && (await junction.has(id))) return
 			throw error
