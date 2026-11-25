@@ -1,6 +1,6 @@
 import type { Row } from '@orkestrel/database'
-import type { ModelEventMap } from '@src/core'
-import type { MODEL_TABLES } from '../../setup.js'
+import type { RepositoryEventMap } from '@src/core'
+import type { REPOSITORY_TABLES } from '../../setup.js'
 import { integerShape, stringShape } from '@orkestrel/contract'
 import {
 	StorageRecorder,
@@ -36,7 +36,7 @@ import {
 	throwLoadObserver,
 } from '../../setup.js'
 
-describe('Model — transaction storage', () => {
+describe('Repository — transaction storage', () => {
 	it('T2 commits nested reads, custom-primary targets, a link, and an unlink', async () => {
 		const db = await createStorageFixture()
 		const events = createRecorder<[key: string | number, relation: string]>()
@@ -44,8 +44,8 @@ describe('Model — transaction storage', () => {
 			const accounts = createRelationManager({
 				storage,
 				relations: STORAGE_RELATIONS,
-				model: { on: { unlink: events.handler } },
-			}).model('accounts')
+				repository: { on: { unlink: events.handler } },
+			}).repository('accounts')
 			await accounts.table.set({ code: 'a1', name: 'Acme' })
 			await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
 			const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
@@ -76,8 +76,8 @@ describe('Model — transaction storage', () => {
 				const accounts = createRelationManager({
 					storage,
 					relations: STORAGE_RELATIONS,
-					model: { on: { unlink: events.handler } },
-				}).model('accounts')
+					repository: { on: { unlink: events.handler } },
+				}).repository('accounts')
 				await accounts.table.set({ code: 'a1', name: 'Acme' })
 				await storage.table('contacts').set({ id: 'c1', accountCode: 'a1' })
 				const loaded = await accounts.load('a1', { contacts: { account: true }, reps: true })
@@ -97,7 +97,7 @@ describe('Model — transaction storage', () => {
 	})
 })
 
-describe('Model — surface', () => {
+describe('Repository — surface', () => {
 	it('exposes name, a fully typed underlying table, and its relation map', async () => {
 		const { accounts } = await setup()
 		expect(accounts.name).toBe('accounts')
@@ -113,7 +113,7 @@ describe('Model — surface', () => {
 	})
 })
 
-describe('Model — load (relationships)', () => {
+describe('Repository — load (relationships)', () => {
 	it('loads belongs (single, FK on this table)', async () => {
 		const { accounts } = await setup()
 		const acme = await accounts.load('acc1', { classification: true })
@@ -159,44 +159,48 @@ describe('Model — load (relationships)', () => {
 	})
 })
 
-describe('Model — nested includes', () => {
+describe('Repository — nested includes', () => {
 	it('T8 many groups by the raw foreign key when a nested relation shadows it', async () => {
 		const { db } = await setup()
-		const manager = createRelationManager<typeof MODEL_TABLES>({
+		const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 			storage: db,
 			relations: {
 				accounts: { contacts: hasMany('accountId') },
 				contacts: { accountId: belongsTo('accountId', 'accounts') },
 			},
 		})
-		const account = await manager.model('accounts').load('acc1', { contacts: { accountId: true } })
+		const account = await manager
+			.repository('accounts')
+			.load('acc1', { contacts: { accountId: true } })
 		expect(rows(account?.contacts).map((row) => row.id)).toEqual(['con1', 'con2'])
 		expect(rows(account?.contacts).map((row) => one(row.accountId).name)).toEqual(['Acme', 'Acme'])
 		expect((await db.table('contacts').get('con1'))?.accountId).toBe('acc1')
 	})
 	it('T8 belongs indexes by the raw primary when a nested relation shadows it', async () => {
 		const { db } = await setup()
-		const manager = createRelationManager<typeof MODEL_TABLES>({
+		const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 			storage: db,
 			relations: {
 				accounts: { classification: belongsTo('classificationId', 'classifications') },
 				classifications: { id: hasMany('classificationId', 'accounts') },
 			},
 		})
-		const account = await manager.model('accounts').load('acc1', { classification: { id: true } })
+		const account = await manager
+			.repository('accounts')
+			.load('acc1', { classification: { id: true } })
 		expect(one(account?.classification).label).toBe('Commercial')
 		expect(rows(one(account?.classification).id).map((row) => row.name)).toEqual(['Acme', 'Beta'])
 	})
 	it('T8 through indexes by the raw target primary when a nested relation shadows it', async () => {
 		const { db } = await setup()
-		const manager = createRelationManager<typeof MODEL_TABLES>({
+		const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 			storage: db,
 			relations: {
 				accounts: { reps: hasThrough('accountReps', 'accountId', 'repId', 'reps') },
 				reps: { id: hasMany('repId', 'accountReps') },
 			},
 		})
-		const account = await manager.model('accounts').load('acc1', { reps: { id: true } })
+		const account = await manager.repository('accounts').load('acc1', { reps: { id: true } })
 		expect(rows(account?.reps).map((row) => row.name)).toEqual(['Rae', 'Bo'])
 		expect(rows(account?.reps).map((row) => rows(row.id).map((junction) => junction.id))).toEqual([
 			[computeLinkKey('acc1', 'rep1')],
@@ -205,14 +209,14 @@ describe('Model — nested includes', () => {
 	})
 	it('T8 morph groups by the raw foreign key when a nested relation shadows it', async () => {
 		const { db } = await setup()
-		const manager = createRelationManager<typeof MODEL_TABLES>({
+		const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 			storage: db,
 			relations: {
 				accounts: { notes: hasMorph('entityId', 'entityType', 'account', 'notes') },
 				notes: { entityId: belongsTo('entityId', 'accounts') },
 			},
 		})
-		const account = await manager.model('accounts').load('acc1', { notes: { entityId: true } })
+		const account = await manager.repository('accounts').load('acc1', { notes: { entityId: true } })
 		expect(rows(account?.notes).map((row) => row.id)).toEqual(['n1'])
 		expect(one(rows(account?.notes)[0]?.entityId).name).toBe('Acme')
 	})
@@ -225,7 +229,7 @@ describe('Model — nested includes', () => {
 	})
 })
 
-describe('Model — load (batch)', () => {
+describe('Repository — load (batch)', () => {
 	it('loads many keys in one call (parallel array, undefined for misses)', async () => {
 		const { accounts } = await setup()
 		const loaded = await accounts.load(['acc1', 'missing', 'acc2'], { contacts: true })
@@ -235,7 +239,7 @@ describe('Model — load (batch)', () => {
 	})
 })
 
-describe('Model — find', () => {
+describe('Repository — find', () => {
 	it('loads relations across a sorted, paged set', async () => {
 		const { accounts } = await setup()
 		const page = await accounts.find({ contacts: true }, { sort: 'name' })
@@ -260,7 +264,7 @@ describe('Model — find', () => {
 	})
 })
 
-describe('Model — through management', () => {
+describe('Repository — through management', () => {
 	it('links, lists, and unlinks junction rows', async () => {
 		const { accounts } = await setup()
 		expect([...(await accounts.links('acc1', 'reps'))].sort()).toEqual(['rep1', 'rep2'])
@@ -280,7 +284,7 @@ describe('Model — through management', () => {
 
 	it('does not duplicate or re-emit an existing link', async () => {
 		const { db, accounts } = await setup()
-		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 		await accounts.link('acc1', 'reps', 'rep3')
 		await accounts.link('acc1', 'reps', 'rep3')
 		expect(await db.table('accountReps').count()).toBe(3)
@@ -290,7 +294,7 @@ describe('Model — through management', () => {
 	it('T4 propagates a failed remove unchanged outside a transaction and emits nothing', async () => {
 		const fault = new Error('delete boundary fault')
 		const { db, accounts } = await setup(new FaultDriver(createMemoryDriver(), 1, fault))
-		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
+		const events = createRecorders<RepositoryEventMap, 'unlink'>(accounts.emitter, ['unlink'])
 		await expect(accounts.unlink('acc1', 'reps', 'rep1')).rejects.toBe(fault)
 		expect(await db.table('accountReps').get(computeLinkKey('acc1', 'rep1'))).toBeDefined()
 		expect(events.unlink.count).toBe(0)
@@ -305,8 +309,8 @@ describe('Model — through management', () => {
 				const scoped = createRelationManager({
 					storage,
 					relations: { accounts: accounts.relations },
-					model: { on: { unlink: events.handler } },
-				}).model('accounts')
+					repository: { on: { unlink: events.handler } },
+				}).repository('accounts')
 				await scoped.unlink('acc1', 'reps', 'rep1')
 			}),
 		).rejects.toBe(fault)
@@ -318,11 +322,11 @@ describe('Model — through management', () => {
 	})
 })
 
-describe('Model — junction writes', () => {
+describe('Repository — junction writes', () => {
 	it('links a pair through one add call under its derived key and emits link once', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
-		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 		await accounts.link('acc0', 'reps', 'rep9')
 		expect(calls.calls).toEqual([['accountReps', 'add']])
 		expect(events.link.calls).toEqual([['acc0', 'reps']])
@@ -336,7 +340,7 @@ describe('Model — junction writes', () => {
 	it('reads a pair the junction holds as linked: no write and no event', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
-		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 		await accounts.link('acc0', 'reps', 'rep0')
 		expect(calls.calls).toEqual([
 			['accountReps', 'add'],
@@ -354,7 +358,7 @@ describe('Model — junction writes', () => {
 		async (_, driver) => {
 			const calls = createRecorder<[table: string, method: string]>()
 			const { db, accounts } = await createLoadFixture(1, 0, calls.handler, driver())
-			const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+			const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 			await Promise.all([
 				accounts.link('acc0', 'reps', 'rep9'),
 				accounts.link('acc0', 'reps', 'rep9'),
@@ -369,7 +373,7 @@ describe('Model — junction writes', () => {
 	it('unlinks a pair through one remove call and emits unlink once', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
-		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
+		const events = createRecorders<RepositoryEventMap, 'unlink'>(accounts.emitter, ['unlink'])
 		await accounts.unlink('acc0', 'reps', 'rep0')
 		expect(calls.calls).toEqual([['accountReps', 'remove']])
 		expect(events.unlink.calls).toEqual([['acc0', 'reps']])
@@ -379,7 +383,7 @@ describe('Model — junction writes', () => {
 	it('unlinks a pair the junction does not hold without emitting', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { db, accounts } = await createLoadFixture(1, 1, calls.handler)
-		const events = createRecorders<ModelEventMap, 'unlink'>(accounts.emitter, ['unlink'])
+		const events = createRecorders<RepositoryEventMap, 'unlink'>(accounts.emitter, ['unlink'])
 		await accounts.unlink('acc0', 'reps', 'rep9')
 		expect(calls.calls).toEqual([['accountReps', 'remove']])
 		expect(events.unlink.count).toBe(0)
@@ -393,7 +397,7 @@ describe('Model — junction writes', () => {
 			calls.push(method)
 			if (table === 'accountReps' && method === 'has') controller.abort('stop between steps')
 		})
-		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 		await accounts.link('acc0', 'reps', 'rep0', { signal: controller.signal })
 		expect(calls).toEqual(['add', 'has'])
 		expect(events.link.count).toBe(0)
@@ -405,7 +409,7 @@ describe('Model — junction writes', () => {
 		const { db, accounts } = await createLoadFixture(1, 0, (table, method) => {
 			if (table === 'accountReps' && method === 'add') controller.abort('stop before the add')
 		})
-		const events = createRecorders<ModelEventMap, 'link'>(accounts.emitter, ['link'])
+		const events = createRecorders<RepositoryEventMap, 'link'>(accounts.emitter, ['link'])
 		await expect(
 			accounts.link('acc0', 'reps', 'rep9', { signal: controller.signal }),
 		).rejects.toSatisfy((error: unknown) => isDatabaseError(error) && error.code === 'ABORTED')
@@ -423,8 +427,8 @@ describe('Model — junction writes', () => {
 				const accounts = createRelationManager({
 					storage,
 					relations: STORAGE_RELATIONS,
-					model: { on: { link: events.handler } },
-				}).model('accounts')
+					repository: { on: { link: events.handler } },
+				}).repository('accounts')
 				await accounts.link('a1', 'reps', 'r2')
 				expect(await accounts.links('a1', 'reps')).toEqual(['r1', 'r2'])
 				throw fault
@@ -450,7 +454,7 @@ describe('Model — junction writes', () => {
 	it('refuses a link on a settled scope with CONFLICT', async () => {
 		const { db, accounts } = await setup()
 		const scoped = await db.transaction(async (storage) =>
-			createRelationManager({ storage, relations: { accounts: accounts.relations } }).model(
+			createRelationManager({ storage, relations: { accounts: accounts.relations } }).repository(
 				'accounts',
 			),
 		)
@@ -472,14 +476,14 @@ describe('Model — junction writes', () => {
 		const accounts = createRelationManager({
 			storage: db,
 			relations: { accounts: { reps: hasThrough('accountReps', 'accountId', 'repId', 'reps') } },
-		}).model('accounts')
+		}).repository('accounts')
 		await expect(accounts.link('acc1', 'reps', 'rep1')).rejects.toSatisfy(
 			(error: unknown) => isDatabaseError(error) && error.code === 'VALIDATION',
 		)
 	})
 })
 
-describe('Model — storage calls per relationship and nesting level', () => {
+describe('Repository — storage calls per relationship and nesting level', () => {
 	// The first call of each load is the keyed read of the base rows; the members after it are
 	// the relation queries the guide counts: a direct relation one, a `through` relation two.
 	const READ = 'read'
@@ -509,7 +513,7 @@ describe('Model — storage calls per relationship and nesting level', () => {
 	})
 })
 
-describe('Model — foreign rows', () => {
+describe('Repository — foreign rows', () => {
 	it('raises INVALID naming the table when a storage returns a base row that is not a record', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const { accounts } = await createLoadFixture(
@@ -550,7 +554,7 @@ describe('Model — foreign rows', () => {
 	)
 })
 
-describe('Model — foreign rows (absent and listed)', () => {
+describe('Repository — foreign rows (absent and listed)', () => {
 	// A JavaScript storage can answer a keyed read with `null`, which the declared row type
 	// refuses; `invokeUnchecked` hands the projector that value without a type assertion.
 	it.each([
@@ -587,7 +591,7 @@ describe('Model — foreign rows (absent and listed)', () => {
 	})
 })
 
-describe('Model — cancellation', () => {
+describe('Repository — cancellation', () => {
 	it('stops a through load between the junction read and the target read', async () => {
 		const calls = createRecorder<[table: string, method: string]>()
 		const controller = new AbortController()
@@ -613,7 +617,7 @@ describe('Model — cancellation', () => {
 	it('stops a population walk after the signal aborts between relations', async () => {
 		const { accounts } = await setup()
 		const controller = new AbortController()
-		const events = createRecorders<ModelEventMap, 'load'>(accounts.emitter, ['load'])
+		const events = createRecorders<RepositoryEventMap, 'load'>(accounts.emitter, ['load'])
 		accounts.emitter.on('load', () => controller.abort('stop after first relation'))
 		await expect(
 			accounts.load(
@@ -628,32 +632,35 @@ describe('Model — cancellation', () => {
 
 // ── Emitter — the PUSH observation surface ───────────────────────────────────
 //
-// A Model exposes a typed `emitter` (`ModelEventMap`) carrying its eager-load + junction
+// A Repository exposes a typed `emitter` (`RepositoryEventMap`) carrying its eager-load + junction
 // moments — `load` (a relation resolved: its name + the count of related rows attached
 // across the whole record set), `link` / `unlink` (a junction row written) — for
 // fire-and-forget observers. Every event is emitted directly; the emitter isolates a listener
 // throw (it can never escape into the batched eager-load), and every emit sits AFTER the load
-// resolves / the junction op completes. A Model is reached through the RelationManager, which
-// threads its `model.on` and `model.error` options into every handle it vends. These pin:
+// resolves / the junction op completes. A Repository is reached through the RelationManager, which
+// threads its `repository.on` and `repository.error` options into every handle it vends. These pin:
 // `load` fires ONCE per relation (not per record — no N+1 in the events) with the attached
-// count; `link` / `unlink` carry the owning key + relation; the manager's `model` option seeds
+// count; `link` / `unlink` carry the owning key + relation; the manager's `repository` option seeds
 // a vended handle's listeners and receives their throws; and emit safety — a
 // throwing observer cannot corrupt the load result.
 
-// The ModelEventMap event names recorded across the emitter tests — fed to `createRecorders`
+// The RepositoryEventMap event names recorded across the emitter tests — fed to `createRecorders`
 // from `@orkestrel/test` (`.claude/rules/tests.md` § Shared test infrastructure: the per-event
 // wiring is centralized; this file keeps only the names its scenarios observe).
-const MODEL_EVENTS: readonly ['load', 'link', 'unlink'] = ['load', 'link', 'unlink']
+const REPOSITORY_EVENTS: readonly ['load', 'link', 'unlink'] = ['load', 'link', 'unlink']
 
 // `createRecorders` takes `TName` explicitly: `TMap` appears only inside the generic `on` of
 // `EventSourceInterface`, so an emitter argument yields no inference candidate. Deriving the
 // union from the array keeps `TName` exactly as wide as the recorded names.
-type ModelEvent = (typeof MODEL_EVENTS)[number]
+type RepositoryEvent = (typeof REPOSITORY_EVENTS)[number]
 
-describe('Model — emitter (push observation surface)', () => {
+describe('Repository — emitter (push observation surface)', () => {
 	it('fires load once per relation with the count of rows attached across the record set', async () => {
 		const { accounts } = await setup()
-		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<RepositoryEventMap, RepositoryEvent>(
+			accounts.emitter,
+			REPOSITORY_EVENTS,
+		)
 		await accounts.load('acc1', { contacts: true, classification: true })
 		// One `load` per relation (NOT per record): acc1 has 2 contacts, 1 classification.
 		expect([...events.load.calls].sort()).toEqual([
@@ -664,7 +671,10 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('counts the total attached across a batch / find (one event per relation, not per record)', async () => {
 		const { accounts } = await setup()
-		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<RepositoryEventMap, RepositoryEvent>(
+			accounts.emitter,
+			REPOSITORY_EVENTS,
+		)
 		// find loads both accounts; acc1 has 2 contacts, acc2 has 0 → 2 attached, ONE `load`.
 		await accounts.find({ contacts: true })
 		expect(events.load.calls).toEqual([['contacts', 2]])
@@ -672,7 +682,10 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('a nested include fires load for the nested relation too', async () => {
 		const { accounts } = await setup()
-		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<RepositoryEventMap, RepositoryEvent>(
+			accounts.emitter,
+			REPOSITORY_EVENTS,
+		)
 		await accounts.load('acc1', { contacts: { account: true } })
 		// `contacts` (2 attached) at the top; nested `account` resolves for the 2 contacts → 2.
 		expect([...events.load.calls].sort()).toEqual([
@@ -683,7 +696,10 @@ describe('Model — emitter (push observation surface)', () => {
 
 	it('fires link then unlink carrying the owning key + relation', async () => {
 		const { accounts } = await setup()
-		const events = createRecorders<ModelEventMap, ModelEvent>(accounts.emitter, MODEL_EVENTS)
+		const events = createRecorders<RepositoryEventMap, RepositoryEvent>(
+			accounts.emitter,
+			REPOSITORY_EVENTS,
+		)
 		await accounts.link('acc1', 'reps', 'rep3')
 		await accounts.unlink('acc1', 'reps', 'rep1')
 		expect(events.link.calls).toEqual([['acc1', 'reps']])
@@ -698,14 +714,14 @@ describe('Model — emitter (push observation surface)', () => {
 		expect(load.calls).toEqual([['profile', 1]])
 	})
 
-	it('seeds a vended handle with the initial listeners the manager model option carries', async () => {
+	it('seeds a vended handle with the initial listeners the manager repository option carries', async () => {
 		const load = createRecorder<[name: string, count: number]>()
 		const { accounts } = await setup(createMemoryDriver(), { on: { load: load.handler } })
 		await accounts.load('acc1', { profile: true })
 		expect(load.calls).toEqual([['profile', 1]])
 	})
 
-	it('routes a throwing listener to the error handler the manager model option carries', async () => {
+	it('routes a throwing listener to the error handler the manager repository option carries', async () => {
 		const failures = createRecorder<[error: unknown, event: string]>()
 		const { accounts } = await setup(createMemoryDriver(), {
 			on: { load: throwLoadObserver },
@@ -731,7 +747,7 @@ describe('Model — emitter (push observation surface)', () => {
 			throw new Error('load observer blew up')
 		})
 		// THE LOAD-BEARING ASSERTION: the eager-load still resolves correctly despite the throw
-		// (the emitter isolated it — this manager carries no `model.error` option, so the throw
+		// (the emitter isolated it — this manager carries no `repository.error` option, so the throw
 		// is swallowed silently — and it never escaped).
 		const acme = await accounts.load('acc1', { contacts: true })
 		const contacts = rows(acme?.contacts)

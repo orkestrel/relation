@@ -10,7 +10,7 @@ import { relationDescriptorContract } from './contracts.js'
  * @remarks
  * The guard of the compiled `relationDescriptorContract`: a plain record whose every
  * member is optional, with `relationship` one of the `Relationship` values and `column`,
- * `key`, `through`, `source`, `target`, `tag`, `label`, and `model` strings. A member
+ * `key`, `through`, `source`, `target`, `tag`, `label`, and `table` strings. A member
  * present with an `undefined` value, a member holding another type, and an enumerable,
  * string-keyed member the descriptor does not declare each refuse it. That is what lets
  * `resolveRelation` read each member after one narrow and report a malformed definition

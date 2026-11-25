@@ -6,8 +6,8 @@
 > a `through` relation two.
 
 Declare each table's relations with the `belongsTo`, `hasMany`, `hasOne`,
-`hasThrough`, and `hasMorph` builders, then reach a typed model through
-`model(name)` and drop to `model.table` for plain typed reads and writes.
+`hasThrough`, and `hasMorph` builders, then reach a typed repository through
+`repository(name)` and drop to `repository.table` for plain typed reads and writes.
 Environment-agnostic — no I/O, no browser or server assumptions. Part of the
 `@orkestrel` line.
 
@@ -49,21 +49,21 @@ const manager = createRelationManager({
 	},
 })
 
-const accounts = manager.model('accounts') // a typed Model; only the relations you ask for load
+const accounts = manager.repository('accounts') // a typed Repository; only the relations you ask for load
 const acme = await accounts.load('acc1', { contacts: true, classification: true })
 
 acme?.name // ✅ the base row is the table's row type
 acme?.contacts // the relation property — broad (Row | readonly Row[] | undefined)
 ```
 
-`model(name)` is checked against the database's declared tables, so a typo is a
-compile error. The model's own table (`model.table`) carries that table's row
+`repository(name)` is checked against the database's declared tables, so a typo is a
+compile error. The repository's own table (`repository.table`) carries that table's row
 type; the attached related rows are the broad `Row` — narrow them where you
 read them.
 
 ## Guide
 
-For the full surface — the manager, the `Model`, the relation builders
+For the full surface — the manager, the `Repository`, the relation builders
 (`belongsTo` / `hasMany` / `hasOne` / `hasThrough` / `hasMorph`), resolution,
 errors, and the observation surface — see
 [`guides/relation.md`](guides/relation.md).

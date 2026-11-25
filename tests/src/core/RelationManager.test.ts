@@ -8,19 +8,19 @@ import {
 	LOG_TABLES,
 	MANAGER_RELATIONS,
 	MANAGER_TABLES,
-	MODEL_TABLES,
+	REPOSITORY_TABLES,
 	createManagerFixture,
 } from '../../setup.js'
 
 describe('RelationManager — registry', () => {
-	it('tracks the defined models', async () => {
+	it('tracks the defined repositories', async () => {
 		const { manager } = await createManagerFixture()
 		expect(manager.count).toBe(2)
 		expect([...manager.names()].sort()).toEqual(['accounts', 'contacts'])
 		expect(manager.has('accounts')).toBe(true)
 		expect(manager.has('missing')).toBe(false)
 	})
-	it('counts zero models when no relations are declared', () => {
+	it('counts zero repositories when no relations are declared', () => {
 		const db = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
 		const manager = createRelationManager<typeof MANAGER_TABLES>({ storage: db })
 		expect(manager.count).toBe(0)
@@ -33,12 +33,12 @@ describe('RelationManager — registry', () => {
 			relations: MANAGER_RELATIONS,
 		})
 		const rootTable: TableInterface<RowOf<typeof MANAGER_TABLES.accounts>> =
-			root.model('accounts').table
+			root.repository('accounts').table
 		await rootTable.set({ id: 'a1', name: 'Acme' })
 		const name = await db.transaction(async (storage) => {
 			const scoped = createRelationManager({ storage, relations: MANAGER_RELATIONS })
 			const table: TableInterface<RowOf<typeof MANAGER_TABLES.accounts>> =
-				scoped.model('accounts').table
+				scoped.repository('accounts').table
 			const account = await table.get('a1')
 			return account?.name.toUpperCase()
 		})
@@ -88,13 +88,13 @@ describe('RelationManager — validation', () => {
 			expect.objectContaining({
 				code: 'INVALID',
 				message: `Relation accounts.reps keys its junction accountReps by its ${role} column ${column}; give the junction a separate text primary column, which link fills with computeLinkKey`,
-				context: { model: 'accounts', relation: 'reps', table: 'accountReps', column },
+				context: { repository: 'accounts', relation: 'reps', table: 'accountReps', column },
 			}),
 		)
 	})
 
 	it('T6 validates targets and junctions inside transaction storage', async () => {
-		const db = createDatabase({ driver: createMemoryDriver(), tables: MODEL_TABLES })
+		const db = createDatabase({ driver: createMemoryDriver(), tables: REPOSITORY_TABLES })
 		await db.transaction(async (storage) => {
 			expect(() =>
 				createRelationManager({
@@ -105,8 +105,8 @@ describe('RelationManager — validation', () => {
 				expect.objectContaining({
 					code: 'INVALID',
 					message:
-						"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's model",
-					context: { model: 'accounts', relation: 'ghost', table: 'ghosts' },
+						"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's table",
+					context: { repository: 'accounts', relation: 'ghost', table: 'ghosts' },
 				}),
 			)
 			expect(() =>
@@ -119,21 +119,23 @@ describe('RelationManager — validation', () => {
 					code: 'INVALID',
 					message:
 						"Relation accounts.reps uses undeclared junction missing; declare it in the database's tables or correct the relation's through",
-					context: { model: 'accounts', relation: 'reps', table: 'missing' },
+					context: { repository: 'accounts', relation: 'reps', table: 'missing' },
 				}),
 			)
 		})
 	})
-	it('T7 propagates CONFLICT from settled storage and retained model reads', async () => {
+	it('T7 propagates CONFLICT from settled storage and retained repository reads', async () => {
 		const db = createDatabase({ driver: createMemoryDriver(), tables: MANAGER_TABLES })
 		const retained = await db.transaction(async (storage) => ({
 			storage,
-			model: createRelationManager({ storage, relations: MANAGER_RELATIONS }).model('accounts'),
+			repository: createRelationManager({ storage, relations: MANAGER_RELATIONS }).repository(
+				'accounts',
+			),
 		}))
 		expect(() =>
 			createRelationManager({ storage: retained.storage, relations: MANAGER_RELATIONS }),
 		).toThrow(expect.objectContaining({ code: 'CONFLICT' }))
-		await expect(retained.model.load('a1', { contacts: true })).rejects.toSatisfy(
+		await expect(retained.repository.load('a1', { contacts: true })).rejects.toSatisfy(
 			(error: unknown) => isDatabaseError(error) && error.code === 'CONFLICT',
 		)
 	})
@@ -155,15 +157,15 @@ describe('RelationManager — validation', () => {
 			expect.objectContaining({
 				code: 'INVALID',
 				message:
-					"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's model",
-				context: { model: 'accounts', relation: 'ghost', table: 'ghosts' },
+					"Relation accounts.ghost targets undeclared table ghosts; declare it in the database's tables or correct the relation's table",
+				context: { repository: 'accounts', relation: 'ghost', table: 'ghosts' },
 			}),
 		)
 	})
 	it('rejects an undeclared through junction at construction', () => {
-		const db = createDatabase({ driver: createMemoryDriver(), tables: MODEL_TABLES })
+		const db = createDatabase({ driver: createMemoryDriver(), tables: REPOSITORY_TABLES })
 		expect(() =>
-			createRelationManager<typeof MODEL_TABLES>({
+			createRelationManager<typeof REPOSITORY_TABLES>({
 				storage: db,
 				relations: { accounts: { reps: hasThrough('missing', 'accountId', 'repId', 'reps') } },
 			}),
@@ -172,24 +174,24 @@ describe('RelationManager — validation', () => {
 				code: 'INVALID',
 				message:
 					"Relation accounts.reps uses undeclared junction missing; declare it in the database's tables or correct the relation's through",
-				context: { model: 'accounts', relation: 'reps', table: 'missing' },
+				context: { repository: 'accounts', relation: 'reps', table: 'missing' },
 			}),
 		)
 	})
 })
 
-describe('RelationManager — model() accessor', () => {
-	it('vends a model over the table, typed by that table and named for it', async () => {
+describe('RelationManager — repository() accessor', () => {
+	it('vends a repository over the table, typed by that table and named for it', async () => {
 		const { manager } = await createManagerFixture()
-		const accounts = manager.model('accounts')
+		const accounts = manager.repository('accounts')
 		expect(accounts.name).toBe('accounts')
 		expect(await accounts.table.count()).toBe(2)
 		expect((await accounts.table.get('acc1'))?.name).toBe('Acme')
 	})
-	it('vends a model even for a declared table with no relations', async () => {
+	it('vends a repository even for a declared table with no relations', async () => {
 		const db = createDatabase({ driver: createMemoryDriver(), tables: LOG_TABLES })
 		await db.table('logs').set({ id: 'l1', msg: 'hi' })
-		const logs = createRelationManager<typeof LOG_TABLES>({ storage: db }).model('logs')
+		const logs = createRelationManager<typeof LOG_TABLES>({ storage: db }).repository('logs')
 		expect(logs.name).toBe('logs')
 		expect((await logs.table.get('l1'))?.msg).toBe('hi')
 		expect(Object.keys(logs.relations)).toEqual([])

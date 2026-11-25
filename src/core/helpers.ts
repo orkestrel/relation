@@ -32,7 +32,7 @@ import { RelationError } from './errors.js'
  * Validates a relation table through its bound storage, translating only an undeclared table.
  *
  * @param storage - The storage that resolves the table
- * @param model - The owning model's name
+ * @param repository - The owning repository's name
  * @param relation - The relation's name
  * @param table - The target or junction table's name
  * @param junction - If `true`, reports an undeclared junction; if `false`, reports an undeclared target. Default: `false`.
@@ -45,7 +45,7 @@ import { RelationError } from './errors.js'
  */
 export function validateRelationTable(
 	storage: DatabaseStorageInterface,
-	model: string,
+	repository: string,
 	relation: string,
 	table: string,
 	junction = false,
@@ -57,9 +57,9 @@ export function validateRelationTable(
 		throw new RelationError(
 			'INVALID',
 			junction
-				? `Relation ${renderPath([model, relation])} uses undeclared junction ${renderPath([table])}; declare it in the database's tables or correct the relation's through`
-				: `Relation ${renderPath([model, relation])} targets undeclared table ${renderPath([table])}; declare it in the database's tables or correct the relation's model`,
-			{ model, relation, table },
+				? `Relation ${renderPath([repository, relation])} uses undeclared junction ${renderPath([table])}; declare it in the database's tables or correct the relation's through`
+				: `Relation ${renderPath([repository, relation])} targets undeclared table ${renderPath([table])}; declare it in the database's tables or correct the relation's table`,
+			{ repository, relation, table },
 		)
 	}
 }
@@ -71,7 +71,7 @@ export function validateRelationTable(
  * `link` writes the pair's `computeLinkKey` into the junction's primary column, so a junction
  * whose primary column is the relation's `source` or `target` column cannot hold that key.
  *
- * @param model - The owning model's name
+ * @param repository - The owning repository's name
  * @param resolved - The resolved `through` relation
  * @param primary - The junction table's primary-key column
  * @throws An `INVALID` {@link RelationError} when `primary` is the relation's `source` or
@@ -83,7 +83,7 @@ export function validateRelationTable(
  * ```
  */
 export function validateRelationJunction(
-	model: string,
+	repository: string,
 	resolved: ResolvedThrough,
 	primary: string,
 ): void {
@@ -92,8 +92,8 @@ export function validateRelationJunction(
 	if (role === undefined) return
 	throw new RelationError(
 		'INVALID',
-		`Relation ${renderPath([model, resolved.name])} keys its junction ${renderPath([resolved.through])} by its ${role} column ${renderPath([primary])}; give the junction a separate text primary column, which link fills with computeLinkKey`,
-		{ model, relation: resolved.name, table: resolved.through, column: primary },
+		`Relation ${renderPath([repository, resolved.name])} keys its junction ${renderPath([resolved.through])} by its ${role} column ${renderPath([primary])}; give the junction a separate text primary column, which link fills with computeLinkKey`,
+		{ repository, relation: resolved.name, table: resolved.through, column: primary },
 	)
 }
 
@@ -130,7 +130,7 @@ export function readRow<T>(table: string, row: T): T & Row {
  * A `string` is a `belongs` (foreign-key column on this table); a `readonly string[]`
  * is a `many` (foreign-key column on the related table); a {@link RelationDescriptor}
  * uses its explicit `relationship`, or infers it from the fields present. The target
- * model defaults to the relation name. A descriptor must pass `relationDescriptorContract`'s
+ * table defaults to the relation name. A descriptor must pass `relationDescriptorContract`'s
  * strict guard: an undeclared member, enumerable or not, a member holding another type, and
  * a member present as `undefined` each refuse it, and no lossless repair admits it. The
  * refusal carries the contract's audit faults, described against its schema. Every column the resolved arm declares is validated here, which is
@@ -150,7 +150,7 @@ export function readRow<T>(table: string, row: T): T & Row {
  */
 export function resolveRelation(name: string, value: Relation): ResolvedRelation {
 	if (isString(value)) {
-		return { relationship: 'belongs', name, model: name, column: value }
+		return { relationship: 'belongs', name, table: name, column: value }
 	}
 	const path = renderPath([name])
 	if (isArray(value)) {
@@ -162,7 +162,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 				{ relation: name },
 			)
 		}
-		return { relationship: 'many', name, model: name, key }
+		return { relationship: 'many', name, table: name, key }
 	}
 	const admitted = admitValue(relationDescriptorContract, value)
 	if (isFailure(admitted)) {
@@ -174,7 +174,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 		)
 	}
 	const descriptor = admitted.value
-	const model = descriptor.model ?? name
+	const table = descriptor.table ?? name
 	// Inferred from the fields present when no explicit `relationship` is set.
 	const relationship: Relationship | undefined =
 		descriptor.relationship !== undefined
@@ -206,7 +206,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 					{ relation: name },
 				)
 			}
-			return { relationship, name, model, column }
+			return { relationship, name, table, column }
 		}
 		case 'many': {
 			const key = descriptor.key
@@ -217,7 +217,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 					{ relation: name },
 				)
 			}
-			return { relationship, name, model, key }
+			return { relationship, name, table, key }
 		}
 		case 'one': {
 			const key = descriptor.key
@@ -228,7 +228,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 					{ relation: name },
 				)
 			}
-			return { relationship, name, model, key }
+			return { relationship, name, table, key }
 		}
 		case 'through': {
 			const { through, source, target } = descriptor
@@ -239,7 +239,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 					{ relation: name },
 				)
 			}
-			return { relationship, name, model, through, source, target }
+			return { relationship, name, table, through, source, target }
 		}
 		case 'morph': {
 			const { key, tag, label } = descriptor
@@ -250,7 +250,7 @@ export function resolveRelation(name: string, value: Relation): ResolvedRelation
 					{ relation: name },
 				)
 			}
-			return { relationship, name, model, key, tag, label }
+			return { relationship, name, table, key, tag, label }
 		}
 	}
 }
@@ -296,7 +296,7 @@ export function computeLinkKey(key: Key, target: Key): string {
  * @remarks
  * An array-valued relation (`many` / `through` / `morph`) sums its lengths; a
  * single-valued one (`belongs` / `one`) counts each present row. This is the count a
- * `Model` carries on its `load` event.
+ * `Repository` carries on its `load` event.
  *
  * @param values - One relation's loaded value per record
  * @returns The total related rows attached across the set
@@ -393,7 +393,7 @@ export function groupRows(
  * (single).
  *
  * @param column - The foreign-key column on this table
- * @param model - Target table name (defaults to the relation name)
+ * @param table - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *
  * @example
@@ -401,8 +401,8 @@ export function groupRows(
  * { classification: belongsTo('classificationId', 'classifications') }
  * ```
  */
-export function belongsTo(column: string, model?: string): RelationDescriptor {
-	return { relationship: 'belongs', column, ...(model !== undefined ? { model } : {}) }
+export function belongsTo(column: string, table?: string): RelationDescriptor {
+	return { relationship: 'belongs', column, ...(table !== undefined ? { table } : {}) }
 }
 
 /**
@@ -410,31 +410,31 @@ export function belongsTo(column: string, model?: string): RelationDescriptor {
  * (array).
  *
  * @param key - The foreign-key column on the related table
- * @param model - Target table name (defaults to the relation name)
+ * @param table - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  */
-export function hasMany(key: string, model?: string): RelationDescriptor {
-	return { relationship: 'many', key, ...(model !== undefined ? { model } : {}) }
+export function hasMany(key: string, table?: string): RelationDescriptor {
+	return { relationship: 'many', key, ...(table !== undefined ? { table } : {}) }
 }
 
 /**
  * Builds a `one` relation — like {@link hasMany}, but a single related row.
  *
  * @param key - The foreign-key column on the related table
- * @param model - Target table name (defaults to the relation name)
+ * @param table - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  */
-export function hasOne(key: string, model?: string): RelationDescriptor {
-	return { relationship: 'one', key, ...(model !== undefined ? { model } : {}) }
+export function hasOne(key: string, table?: string): RelationDescriptor {
+	return { relationship: 'one', key, ...(table !== undefined ? { table } : {}) }
 }
 
 /**
  * Builds a `through` relation — a junction table links the two sides (many-to-many).
  *
  * @param through - The junction table name
- * @param source - The junction foreign-key column pointing at the owning model
- * @param target - The junction foreign-key column pointing at the related model
- * @param model - Target table name (defaults to the relation name)
+ * @param source - The junction foreign-key column pointing at the owning table
+ * @param target - The junction foreign-key column pointing at the related table
+ * @param table - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *
  * @example
@@ -446,14 +446,14 @@ export function hasThrough(
 	through: string,
 	source: string,
 	target: string,
-	model?: string,
+	table?: string,
 ): RelationDescriptor {
 	return {
 		relationship: 'through',
 		through,
 		source,
 		target,
-		...(model !== undefined ? { model } : {}),
+		...(table !== undefined ? { table } : {}),
 	}
 }
 
@@ -463,8 +463,8 @@ export function hasThrough(
  *
  * @param key - The foreign-key column on the related table
  * @param tag - The discriminator column on the related table
- * @param label - The discriminator value identifying the owning model
- * @param model - Target table name (defaults to the relation name)
+ * @param label - The discriminator value identifying the owning repository
+ * @param table - Target table name (defaults to the relation name)
  * @returns A {@link RelationDescriptor}
  *
  * @example
@@ -476,7 +476,7 @@ export function hasMorph(
 	key: string,
 	tag: string,
 	label: string,
-	model?: string,
+	table?: string,
 ): RelationDescriptor {
-	return { relationship: 'morph', key, tag, label, ...(model !== undefined ? { model } : {}) }
+	return { relationship: 'morph', key, tag, label, ...(table !== undefined ? { table } : {}) }
 }

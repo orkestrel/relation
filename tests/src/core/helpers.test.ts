@@ -36,10 +36,10 @@ describe('validateRelationTable', () => {
 		).toThrow(
 			expect.objectContaining({
 				code: 'INVALID',
-				context: { model: 'accounts', relation: 'contacts', table: 'missing' },
+				context: { repository: 'accounts', relation: 'contacts', table: 'missing' },
 				message: junction
 					? "Relation accounts.contacts uses undeclared junction missing; declare it in the database's tables or correct the relation's through"
-					: "Relation accounts.contacts targets undeclared table missing; declare it in the database's tables or correct the relation's model",
+					: "Relation accounts.contacts targets undeclared table missing; declare it in the database's tables or correct the relation's table",
 			}),
 		)
 	})
@@ -57,7 +57,7 @@ describe('resolveRelation — shorthand', () => {
 		expect(resolveRelation('account', 'accountId')).toEqual({
 			relationship: 'belongs',
 			name: 'account',
-			model: 'account',
+			table: 'account',
 			column: 'accountId',
 		})
 	})
@@ -66,7 +66,7 @@ describe('resolveRelation — shorthand', () => {
 		expect(resolveRelation('contacts', ['accountId'])).toEqual({
 			relationship: 'many',
 			name: 'contacts',
-			model: 'contacts',
+			table: 'contacts',
 			key: 'accountId',
 		})
 	})
@@ -79,7 +79,7 @@ describe('resolveRelation — builders', () => {
 		).toEqual({
 			relationship: 'belongs',
 			name: 'classification',
-			model: 'classifications',
+			table: 'classifications',
 			column: 'classificationId',
 		})
 		// hasMany and hasOne are distinguished by `relationship` (both would be `{ key }` otherwise).
@@ -87,7 +87,7 @@ describe('resolveRelation — builders', () => {
 		expect(resolveRelation('profile', hasOne('accountId', 'profiles'))).toEqual({
 			relationship: 'one',
 			name: 'profile',
-			model: 'profiles',
+			table: 'profiles',
 			key: 'accountId',
 		})
 	})
@@ -98,7 +98,7 @@ describe('resolveRelation — builders', () => {
 		).toEqual({
 			relationship: 'through',
 			name: 'reps',
-			model: 'reps',
+			table: 'reps',
 			through: 'accountReps',
 			source: 'accountId',
 			target: 'repId',
@@ -108,18 +108,18 @@ describe('resolveRelation — builders', () => {
 		).toEqual({
 			relationship: 'morph',
 			name: 'notes',
-			model: 'notes',
+			table: 'notes',
 			key: 'entityId',
 			tag: 'entityType',
 			label: 'account',
 		})
 	})
 
-	it('defaults the target model to the relation name when a builder omits it', () => {
+	it('defaults the target table to the relation name when a builder omits it', () => {
 		expect(resolveRelation('reps', hasThrough('accountReps', 'accountId', 'repId'))).toEqual({
 			relationship: 'through',
 			name: 'reps',
-			model: 'reps',
+			table: 'reps',
 			through: 'accountReps',
 			source: 'accountId',
 			target: 'repId',
@@ -180,7 +180,7 @@ describe('resolveRelation — raw descriptor inference', () => {
 		expect(isRelationError(error)).toBe(true)
 		expect(readProperty(error, 'code')).toBe('INVALID')
 		expect(readProperty(error, 'message')).toBe(
-			`Relation contacts: expected a column string, a [key] array, or a relation descriptor\ncomment: extra; this key is not declared, remove it or use a declared key: relationship, column, key, through, source, target, tag, label, model\nsend {"relationship"?: "belongs" | "many" | "one" | "through" | "morph", "column"?: string, "key"?: string, "through"?: string, "source"?: string, "target"?: string…`,
+			`Relation contacts: expected a column string, a [key] array, or a relation descriptor\ncomment: extra; this key is not declared, remove it or use a declared key: relationship, column, key, through, source, target, tag, label, table\nsend {"relationship"?: "belongs" | "many" | "one" | "through" | "morph", "column"?: string, "key"?: string, "through"?: string, "source"?: string, "target"?: string…`,
 		)
 		expect(readProperty(readProperty(error, 'context'), 'faults')).toEqual([
 			{ reason: 'extra', path: ['comment'] },
@@ -245,7 +245,7 @@ describe('resolveRelationMap', () => {
 		})
 		expect([...map.keys()].sort()).toEqual(['classification', 'contacts'])
 		expect(map.get('contacts')?.relationship).toBe('many')
-		expect(map.get('classification')?.model).toBe('classifications')
+		expect(map.get('classification')?.table).toBe('classifications')
 	})
 })
 
@@ -266,7 +266,7 @@ describe('validateRelationJunction', () => {
 			expect.objectContaining({
 				code: 'INVALID',
 				message: `Relation accounts.reps keys its junction accountReps by its ${role} column ${column}; give the junction a separate text primary column, which link fills with computeLinkKey`,
-				context: { model: 'accounts', relation: 'reps', table: 'accountReps', column },
+				context: { repository: 'accounts', relation: 'reps', table: 'accountReps', column },
 			}),
 		)
 	})

@@ -62,7 +62,7 @@ describe('INTEGRATION_RELATIONS', () => {
 			throw new Error('the users to posts relation must be a keyed descriptor')
 		}
 		// The target table defaults to the relation name, so `posts` carries the foreign key.
-		expect(relation.model).toBeUndefined()
+		expect(relation.table).toBeUndefined()
 		const column = Object.entries(INTEGRATION_TABLES.posts).find(([name]) => name === relation.key)
 		if (column === undefined) throw new Error(`posts declares no ${String(relation.key)} column`)
 		const [, shape] = column

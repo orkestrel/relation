@@ -48,7 +48,7 @@ export const INTEGRATION_RELATIONS: RelationSchema<typeof INTEGRATION_TABLES> = 
 }
 
 /** Holds the relation loading fixture's table shapes. */
-export const MODEL_TABLES = {
+export const REPOSITORY_TABLES = {
 	accounts: { id: stringShape(), name: stringShape(), classificationId: stringShape() },
 	contacts: { id: stringShape(), accountId: stringShape(), email: stringShape() },
 	classifications: { id: stringShape(), label: stringShape() },
@@ -194,7 +194,7 @@ export function one(value: unknown): Row {
 	return isRecord(value) ? value : {}
 }
 
-// An observer that always throws, so the emitter's isolation and the manager's `model.error`
+// An observer that always throws, so the emitter's isolation and the manager's `repository.error`
 // handler are both observable from one load.
 /** Throws from a load observer to exercise listener isolation. */
 export function throwLoadObserver(): void {
@@ -204,11 +204,11 @@ export function throwLoadObserver(): void {
 /** Opens the relation-loading fixture over a real driver. */
 export async function setup(
 	driver: DriverInterface = createMemoryDriver(),
-	model?: RelationManagerOptions['model'],
+	repository?: RelationManagerOptions['repository'],
 ) {
 	const db = createDatabase({
 		driver,
-		tables: MODEL_TABLES,
+		tables: REPOSITORY_TABLES,
 	})
 
 	await db.table('classifications').set({ id: 'cls1', label: 'Commercial' })
@@ -231,7 +231,7 @@ export async function setup(
 		.table('notes')
 		.set({ id: 'n2', entityId: 'acc1', entityType: 'contact', body: 'skipped' })
 
-	const manager = createRelationManager<typeof MODEL_TABLES>({
+	const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 		storage: db,
 		relations: {
 			accounts: {
@@ -243,9 +243,9 @@ export async function setup(
 			},
 			contacts: { account: belongsTo('accountId', 'accounts') },
 		},
-		...(model !== undefined ? { model } : {}),
+		...(repository !== undefined ? { repository } : {}),
 	})
-	return { db, manager, accounts: manager.model('accounts') }
+	return { db, manager, accounts: manager.repository('accounts') }
 }
 
 /** Opens the manager registry fixture. */
@@ -504,7 +504,7 @@ export class RecordingStorage implements DatabaseStorageInterface {
 }
 
 /** Holds the load fixture's relations: every relationship, nested both ways. */
-export const LOAD_RELATIONS: RelationSchema<typeof MODEL_TABLES> = {
+export const LOAD_RELATIONS: RelationSchema<typeof REPOSITORY_TABLES> = {
 	accounts: {
 		classification: belongsTo('classificationId', 'classifications'),
 		contacts: hasMany('accountId'),
@@ -528,7 +528,7 @@ export async function createLoadFixture(
 	driver: DriverInterface = createMemoryDriver(),
 	project?: RowProjector,
 ) {
-	const db = createDatabase({ driver, tables: MODEL_TABLES })
+	const db = createDatabase({ driver, tables: REPOSITORY_TABLES })
 	const accounts = Array.from({ length: parents }, (_, index) => `acc${index}`)
 	const items = Array.from({ length: related }, (_, index) => index)
 	await db.table('classifications').set({ id: 'cls1', label: 'Commercial' })
@@ -573,5 +573,5 @@ export async function createLoadFixture(
 		storage: new RecordingStorage(db, record, project),
 		relations: LOAD_RELATIONS,
 	})
-	return { db, keys: accounts, accounts: manager.model('accounts') }
+	return { db, keys: accounts, accounts: manager.repository('accounts') }
 }

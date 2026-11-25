@@ -5,7 +5,7 @@ import { literalShape, objectShape, optionalShape, stringShape } from '@orkestre
  *
  * @remarks
  * Every member is optional: `relationship` is one of the `Relationship` values, and
- * `column`, `key`, `through`, `source`, `target`, `tag`, `label`, and `model` are strings.
+ * `column`, `key`, `through`, `source`, `target`, `tag`, `label`, and `table` are strings.
  * The object is closed, so an enumerable, string-keyed member the descriptor does not declare
  * refuses it.
  *
@@ -26,5 +26,5 @@ export const relationDescriptorShape = objectShape({
 	target: optionalShape(stringShape()),
 	tag: optionalShape(stringShape()),
 	label: optionalShape(stringShape()),
-	model: optionalShape(stringShape()),
+	table: optionalShape(stringShape()),
 })

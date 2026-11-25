@@ -61,7 +61,7 @@ await new GuideCommand({
 		resolveRelationMap,
 	} = await import('@src/core')
 	const { describe, expect, it } = await import('vitest')
-	const { MODEL_TABLES, createLoadFixture, one, rows: related } = await import('./setup.js')
+	const { REPOSITORY_TABLES, createLoadFixture, one, rows: related } = await import('./setup.js')
 	const sources = createSourceManager({ files, modules: MODULES })
 	const own = requireValue(
 		rows.find((row) => row.entry.spec === GUIDE_SPEC),
@@ -239,9 +239,9 @@ await new GuideCommand({
 					storage,
 					relations: { accounts: { contacts: hasMany('accountId') } },
 				})
-				await manager.model('accounts').table.set({ id: 'a1', name: 'Acme' })
+				await manager.repository('accounts').table.set({ id: 'a1', name: 'Acme' })
 				await storage.table('contacts').set({ id: 'c1', accountId: 'a1' })
-				const account = await manager.model('accounts').load('a1', { contacts: true })
+				const account = await manager.repository('accounts').load('a1', { contacts: true })
 				return isArray(account?.contacts) ? account.contacts.length : 0
 			})
 			expect(count).toBe(1)
@@ -268,7 +268,7 @@ await new GuideCommand({
 			expect(resolved).toEqual({
 				relationship: 'through',
 				name: 'reps',
-				model: 'reps',
+				table: 'reps',
 				through: 'accountReps',
 				source: 'accountId',
 				target: 'repId',
@@ -367,9 +367,9 @@ await new GuideCommand({
 		it('lists the tables carrying relations and reports membership', () => {
 			const database = createDatabase({
 				driver: createMemoryDriver(),
-				tables: MODEL_TABLES,
+				tables: REPOSITORY_TABLES,
 			})
-			const manager = createRelationManager<typeof MODEL_TABLES>({
+			const manager = createRelationManager<typeof REPOSITORY_TABLES>({
 				storage: database,
 				relations: {
 					accounts: {

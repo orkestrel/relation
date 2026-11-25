@@ -14,7 +14,7 @@ import { holds, INTRINSICS, isFunction, isInstance, isObject, literalOf } from '
  * relation targeting a table or junction the database does not declare, raised when
  * the manager is created (`INVALID`), a junction keyed by its relation's `source` or
  * `target` column (`INVALID`), a row a storage returns that is not a plain record
- * (`INVALID`), a reference to a relation a model does not
+ * (`INVALID`), a reference to a relation a repository does not
  * define (`UNKNOWN_RELATION`), and `link` / `unlink` / `links` on a relation that is
  * not a `through` (`NOT_THROUGH`).
  */

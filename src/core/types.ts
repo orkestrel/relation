@@ -12,7 +12,7 @@ import type { EmitterErrorHandler, EmitterHooks, EmitterInterface } from '@orkes
 
 // Relations — ORM-style eager loading layered on the database. A relation
 // manager is created over a database and a declarative map of per-table
-// relations; each model pairs a typed table with relation-aware `load` / `find`
+// relations; each repository pairs a typed table with relation-aware `load` / `find`
 // and through-table management. Loading is batched (one query per direct relation
 // or two per through relation over the whole record set, grouped in memory — no
 // N+1). Types are the source of truth.
@@ -40,7 +40,7 @@ export type Relationship = 'belongs' | 'many' | 'one' | 'through' | 'morph'
  * and `one` are otherwise indistinguishable by fields alone. When `relationship`
  * is omitted (a hand-written descriptor) it is inferred from the fields present:
  * `column` → `belongs`; `through` + `source` + `target` → `through`; `key` +
- * `tag` + `label` → `morph`; `key` alone → `one`. `model` overrides the target
+ * `tag` + `label` → `morph`; `key` alone → `one`. `table` overrides the target
  * table name (it defaults to the relation name).
  */
 export interface RelationDescriptor {
@@ -52,7 +52,7 @@ export interface RelationDescriptor {
 	readonly target?: string
 	readonly tag?: string
 	readonly label?: string
-	readonly model?: string
+	readonly table?: string
 }
 
 /**
@@ -65,7 +65,7 @@ export interface RelationDescriptor {
  */
 export type Relation = string | readonly string[] | RelationDescriptor
 
-/** Holds a model's relations, keyed by relation name. */
+/** Holds a repository's relations, keyed by relation name. */
 export type RelationMap = Readonly<Record<string, Relation>>
 
 /** Names a machine-readable {@link RelationError} code. */
@@ -88,12 +88,12 @@ export type RelationSchema<T extends TableMap = TableMap> = {
  *
  * @remarks
  * `column` is that foreign key; the related row is the one whose primary key it holds.
- * `name` is the relation's key in its {@link RelationMap} and `model` the target table.
+ * `name` is the relation's key in its {@link RelationMap} and `table` the target table.
  */
 export interface ResolvedBelongs {
 	readonly relationship: 'belongs'
 	readonly name: string
-	readonly model: string
+	readonly table: string
 	readonly column: string
 }
 
@@ -108,7 +108,7 @@ export interface ResolvedBelongs {
 export interface ResolvedMany {
 	readonly relationship: 'many'
 	readonly name: string
-	readonly model: string
+	readonly table: string
 	readonly key: string
 }
 
@@ -123,7 +123,7 @@ export interface ResolvedMany {
 export interface ResolvedOne {
 	readonly relationship: 'one'
 	readonly name: string
-	readonly model: string
+	readonly table: string
 	readonly key: string
 }
 
@@ -133,7 +133,7 @@ export interface ResolvedOne {
  *
  * @remarks
  * `through` is the junction table, `source` its foreign-key column pointing at the
- * owning model, and `target` its foreign-key column pointing at the related model.
+ * owning table, and `target` its foreign-key column pointing at the related table.
  * These are the columns `link` / `unlink` / `links` write and read. The junction's
  * primary column must store text: `link` writes the pair's derived key there, so a
  * numeric primary column refuses the row with the database's `VALIDATION` error.
@@ -141,7 +141,7 @@ export interface ResolvedOne {
 export interface ResolvedThrough {
 	readonly relationship: 'through'
 	readonly name: string
-	readonly model: string
+	readonly table: string
 	readonly through: string
 	readonly source: string
 	readonly target: string
@@ -153,12 +153,12 @@ export interface ResolvedThrough {
  *
  * @remarks
  * `key` is the foreign key on the related table, `tag` the discriminator column beside
- * it, and `label` the discriminator value identifying the owning model.
+ * it, and `label` the discriminator value identifying the owning repository.
  */
 export interface ResolvedMorph {
 	readonly relationship: 'morph'
 	readonly name: string
-	readonly model: string
+	readonly table: string
 	readonly key: string
 	readonly tag: string
 	readonly label: string
@@ -206,7 +206,7 @@ export interface Include {
  *
  * @remarks
  * The broad value type (`Row | readonly Row[] | undefined`) is narrowed at the use
- * site. This is the mutable bag a `Model` fills while populating a record set;
+ * site. This is the mutable bag a `Repository` fills while populating a record set;
  * `Loaded<T>` is a base row intersected with its `Readonly` form.
  */
 export type LoadedMap = Record<string, Row | readonly Row[] | undefined>
@@ -223,12 +223,12 @@ export type LoadedMap = Record<string, Row | readonly Row[] | undefined>
 export type Loaded<T> = T & Readonly<LoadedMap>
 
 /**
- * Holds a related model's resolved relations and primary-key column, for nested loading.
+ * Holds a related repository's resolved relations and primary-key column, for nested loading.
  *
  * @remarks
- * The lookup result the relation registry hands a {@link ModelInterface} so it can
- * recurse into a related model's own relations. `RelationManager` produces it (one
- * per declared table); `Model` consumes it as its registry lookup's return. Shared
+ * The lookup result the relation registry hands a {@link RepositoryInterface} so it can
+ * recurse into a related repository's own relations. `RelationManager` produces it (one
+ * per declared table); `Repository` consumes it as its registry lookup's return. Shared
  * here so the producer and consumer stay in lockstep.
  */
 export interface RelationContext {
@@ -245,10 +245,10 @@ export interface FindOptions extends OperationOptions {
 	readonly direction?: OrderDirection
 }
 
-// === Model
+// === Repository
 
 /**
- * Declares the push observation surface of a {@link ModelInterface} — the
+ * Declares the push observation surface of a {@link RepositoryInterface} — the
  * eager-load + junction-management moments a fire-and-forget observer (logging, metrics,
  * a sync layer) subscribes to.
  *
@@ -263,11 +263,11 @@ export interface FindOptions extends OperationOptions {
  * completes — so a throwing observer can never corrupt the eager-load batching or a
  * junction write.
  * `RelationManager` is event-free by design (a stateless
- * registry that merely vends models — it has no observable lifecycle of its own); the
- * per-entity {@link ModelInterface} is where loading and linking happen, so the emitter
- * lives there. Subscribe through `model.emitter.on(...)`.
+ * registry that merely vends repositories — it has no observable lifecycle of its own); the
+ * per-entity {@link RepositoryInterface} is where loading and linking happen, so the emitter
+ * lives there. Subscribe through `repository.emitter.on(...)`.
  */
-export type ModelEventMap = {
+export type RepositoryEventMap = {
 	/**
 	 * Fires when a relation is eager-loaded — the relation name + the count of related rows
 	 * attached.
@@ -292,18 +292,18 @@ export type ModelEventMap = {
  * @remarks
  * Table operations are reached through `table` (a fully typed
  * {@link TableInterface}); relation loading and through management are on the
- * model itself. `load` fetches one record with its relations populated; `find`
+ * repository itself. `load` fetches one record with its relations populated; `find`
  * fetches many; both batch-load (one query per direct relation or two per
  * `through`, regardless of result size). `link` / `unlink` / `links` manage a
  * `through` relation's junction rows.
  * Exposes a typed {@link emitter} carrying the eager-load + junction
- * moments ({@link ModelEventMap}) for fire-and-forget observers — emitting is
+ * moments ({@link RepositoryEventMap}) for fire-and-forget observers — emitting is
  * observation-only (a swallowed listener throw can never corrupt the batched load).
  * `link` is one insert under the pair's derived key, and `unlink` one remove of it,
  * so a pair holds at most one junction row, concurrent calls included.
  */
-export interface ModelInterface<T = Row> {
-	readonly emitter: EmitterInterface<ModelEventMap>
+export interface RepositoryInterface<T = Row> {
+	readonly emitter: EmitterInterface<RepositoryEventMap>
 	readonly name: string
 	readonly table: TableInterface<T>
 	readonly relations: RelationMap
@@ -350,7 +350,7 @@ export interface ModelInterface<T = Row> {
 	 * @param target - The related record's primary key
 	 * @param options - The database package's abort option
 	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
-	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 *   `UNKNOWN_RELATION` one for a relation the repository never declared
 	 */
 	link(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
 	/**
@@ -365,7 +365,7 @@ export interface ModelInterface<T = Row> {
 	 * @param target - The related record's primary key
 	 * @param options - The database package's abort option
 	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
-	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 *   `UNKNOWN_RELATION` one for a relation the repository never declared
 	 */
 	unlink(key: Key, relation: string, target: Key, options?: OperationOptions): Promise<void>
 	/**
@@ -376,7 +376,7 @@ export interface ModelInterface<T = Row> {
 	 * @param options - The database package's abort option
 	 * @returns The related keys the junction holds for that record
 	 * @throws A `NOT_THROUGH` {@link RelationError} for any other relationship, and an
-	 *   `UNKNOWN_RELATION` one for a relation the model never declared
+	 *   `UNKNOWN_RELATION` one for a relation the repository never declared
 	 */
 	links(key: Key, relation: string, options?: OperationOptions): Promise<readonly Key[]>
 }
@@ -387,10 +387,10 @@ export interface ModelInterface<T = Row> {
  * Configures `createRelationManager`.
  *
  * @remarks
- * `model` carries the emitter settings the manager threads into every model it
- * vends: `model.on` seeds each vended handle's initial {@link ModelEventMap}
- * listeners, and `model.error` receives a listener throw as `(error, event)`.
- * Each `model(name)` call constructs a handle with its own emitter, so these
+ * `repository` carries the emitter settings the manager threads into every repository it
+ * vends: `repository.on` seeds each vended handle's initial {@link RepositoryEventMap}
+ * listeners, and `repository.error` receives a listener throw as `(error, event)`.
+ * Each `repository(name)` call constructs a handle with its own emitter, so these
  * settings apply per handle rather than once for the manager.
  */
 export interface RelationManagerOptions<T extends TableMap = TableMap> {
@@ -398,51 +398,51 @@ export interface RelationManagerOptions<T extends TableMap = TableMap> {
 	 * Holds the storage the registry resolves tables through: a database, or the storage a transaction scope supplies.
 	 *
 	 * @remarks
-	 * Intersected with the broad `DatabaseStorageInterface` so `model()` types each
+	 * Intersected with the broad `DatabaseStorageInterface` so `repository()` types each
 	 * declared table and loaders look related tables up by runtime name. A manager over
-	 * transaction storage belongs to that callback; its models and tables throw `CONFLICT`
+	 * transaction storage belongs to that callback; its repositories and tables throw `CONFLICT`
 	 * after settlement. Construction resolves every relation target and junction through
 	 * `table()`; an undeclared one throws `INVALID`, and every other storage error propagates unchanged.
 	 */
 	readonly storage: DatabaseStorageInterface<T> & DatabaseStorageInterface
 	readonly relations?: RelationSchema<T>
-	readonly model?: {
-		readonly on?: EmitterHooks<ModelEventMap>
+	readonly repository?: {
+		readonly on?: EmitterHooks<RepositoryEventMap>
 		readonly error?: EmitterErrorHandler
 	}
 }
 
 /**
- * Vends a typed {@link ModelInterface} per table.
+ * Vends a typed {@link RepositoryInterface} per table.
  *
  * @remarks
  * Built from a database and a {@link RelationSchema}; relations are resolved once
- * at construction. `model(name)` returns the model for a declared table, typed by
- * that table's row. Each call constructs a model, and the returned handle owns its
+ * at construction. `repository(name)` returns the repository for a declared table, typed by
+ * that table's row. Each call constructs a repository, and the returned handle owns its
  * own emitter, so retain the handle a subscription is taken on.
  */
 export interface RelationManagerInterface<T extends TableMap = TableMap> {
 	readonly count: number
 	/**
-	 * Returns the typed model for a declared table.
+	 * Returns the typed repository for a declared table.
 	 *
 	 * @remarks
 	 * `name` is checked against the database's declared tables, so a typo is a compile error.
-	 * A declared table with no relation entry yields a relation-less model, still fully usable
+	 * A declared table with no relation entry yields a relation-less repository, still fully usable
 	 * for typed reads and writes through `table`.
 	 *
 	 * @param name - A declared table's name
-	 * @returns A model typed by that table's row
+	 * @returns A repository typed by that table's row
 	 */
-	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>>
+	repository<K extends keyof T & string>(name: K): RepositoryInterface<RowOf<T[K]>>
 	/**
-	 * Lists the names of every model carrying resolved relations.
+	 * Lists the names of every repository carrying resolved relations.
 	 *
 	 * @returns The table names the registry resolved a relation map for
 	 */
 	names(): readonly string[]
 	/**
-	 * Reports whether a model carries resolved relations.
+	 * Reports whether a repository carries resolved relations.
 	 *
 	 * @param name - The table name to test
 	 * @returns True when the registry resolved a relation map for that table; false otherwise

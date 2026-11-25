@@ -11,8 +11,8 @@ import type {
 	Include,
 	Loaded,
 	LoadedMap,
-	ModelEventMap,
-	ModelInterface,
+	RepositoryEventMap,
+	RepositoryInterface,
 	RelationContext,
 	RelationMap,
 	ResolvedBelongs,
@@ -39,7 +39,7 @@ import { RelationError } from './errors.js'
  * Pairs a typed table with relation-aware `load` / `find` and junction management.
  *
  * @remarks
- * The model's own table is fully typed (`table`); related tables are reached by
+ * The repository's own table is fully typed (`table`); related tables are reached by
  * runtime name through the bound storage at the broad `Row` type. Loading is batched:
  * a direct relation uses one query for the whole record set, while a `through`
  * relation uses two (junction then target); both counts remain constant regardless
@@ -50,7 +50,7 @@ import { RelationError } from './errors.js'
  * `Object.assign` — no `as`.
  *
  * @remarks
- * - **Observable.** The owned {@link emitter} ({@link ModelEventMap}) carries the
+ * - **Observable.** The owned {@link emitter} ({@link RepositoryEventMap}) carries the
  *   eager-load + junction moments — `load` (a relation resolved: its name + the count of
  *   related rows attached across the whole record set), `link` / `unlink` (a junction row
  *   written) — for fire-and-forget observers. Every event is emitted directly, strictly
@@ -61,10 +61,10 @@ import { RelationError } from './errors.js'
  *
  * @example
  * ```ts
- * import { Model, resolveRelationMap, hasMany } from '@orkestrel/relation'
+ * import { Repository, resolveRelationMap, hasMany } from '@orkestrel/relation'
  *
  * const relations = { posts: hasMany('author') }
- * const users = new Model(
+ * const users = new Repository(
  * 	'users',
  * 	storage.table('users'),
  * 	resolveRelationMap(relations),
@@ -76,32 +76,32 @@ import { RelationError } from './errors.js'
  * const ada = await users.load('u1', { posts: true })
  * ```
  */
-export class Model<T = Row> implements ModelInterface<T> {
+export class Repository<T = Row> implements RepositoryInterface<T> {
 	readonly #name: string
 	readonly #table: TableInterface<T>
 	readonly #resolved: ReadonlyMap<string, ResolvedRelation>
 	readonly #relations: RelationMap
-	readonly #lookup: (model: string) => RelationContext | undefined
+	readonly #lookup: (table: string) => RelationContext | undefined
 	readonly #storage: DatabaseStorageInterface
 	// The push observation surface — owned, never inherited. The emitter isolates a
 	// listener throw (routing it to the `error` handler), so it can never escape into the
 	// batched eager-load.
-	readonly #emitter: Emitter<ModelEventMap>
+	readonly #emitter: Emitter<RepositoryEventMap>
 
 	/**
-	 * Constructs a model over one table and its resolved relations.
+	 * Constructs a repository over one table and its resolved relations.
 	 *
-	 * @param name - The model's table name
-	 * @param table - The typed table this model's own reads and writes go through; take it
+	 * @param name - The repository's table name
+	 * @param table - The typed table this repository's own reads and writes go through; take it
 	 *   from `storage` so both belong to one scope, as `RelationManager` does
 	 *   (a root table read inside a transaction refuses with `CONFLICT`)
-	 * @param resolved - The model's relations, resolved by `resolveRelationMap`
+	 * @param resolved - The repository's relations, resolved by `resolveRelationMap`
 	 * @param relations - The raw relation map the resolved relations came from
-	 * @param lookup - Reads a related model's {@link RelationContext} for a nested include,
-	 *   and returns `undefined` for a model the registry does not hold; its contexts must
+	 * @param lookup - Reads a related table's {@link RelationContext} for a nested include,
+	 *   and returns `undefined` for a table the registry does not hold; its contexts must
 	 *   resolve through the same `storage`
 	 * @param storage - The broad storage used to read related and junction tables by name
-	 * @param on - Initial {@link ModelEventMap} listeners
+	 * @param on - Initial {@link RepositoryEventMap} listeners
 	 * @param error - Receives a listener throw as `(error, event)`. Default: the throw is
 	 *   swallowed.
 	 */
@@ -110,9 +110,9 @@ export class Model<T = Row> implements ModelInterface<T> {
 		table: TableInterface<T>,
 		resolved: ReadonlyMap<string, ResolvedRelation>,
 		relations: RelationMap,
-		lookup: (model: string) => RelationContext | undefined,
+		lookup: (table: string) => RelationContext | undefined,
 		storage: DatabaseStorageInterface,
-		on?: EmitterHooks<ModelEventMap>,
+		on?: EmitterHooks<RepositoryEventMap>,
 		error?: EmitterErrorHandler,
 	) {
 		this.#name = name
@@ -121,13 +121,13 @@ export class Model<T = Row> implements ModelInterface<T> {
 		this.#relations = relations
 		this.#lookup = lookup
 		this.#storage = storage
-		this.#emitter = new Emitter<ModelEventMap>({
+		this.#emitter = new Emitter<RepositoryEventMap>({
 			...(on !== undefined ? { on } : {}),
 			...(error !== undefined ? { error } : {}),
 		})
 	}
 
-	get emitter(): EmitterInterface<ModelEventMap> {
+	get emitter(): EmitterInterface<RepositoryEventMap> {
 		return this.#emitter
 	}
 
@@ -269,15 +269,15 @@ export class Model<T = Row> implements ModelInterface<T> {
 		if (resolved === undefined) {
 			throw new RelationError(
 				'UNKNOWN_RELATION',
-				`Model ${renderPath([this.#name])} has no relation ${renderPath([relation])}; declare it in the model's relation map`,
-				{ model: this.#name, relation },
+				`Repository ${renderPath([this.#name])} has no relation ${renderPath([relation])}; declare it in the repository's relation map`,
+				{ repository: this.#name, relation },
 			)
 		}
 		if (resolved.relationship !== 'through') {
 			throw new RelationError(
 				'NOT_THROUGH',
 				`Relation ${renderPath([this.#name, relation])} is a ${resolved.relationship} relation; link, unlink, and links need a through relation built with hasThrough`,
-				{ model: this.#name, relation },
+				{ repository: this.#name, relation },
 			)
 		}
 		return resolved
@@ -342,14 +342,14 @@ export class Model<T = Row> implements ModelInterface<T> {
 		const column = resolved.column
 		const keys = [...new Set(records.map((record) => resolveField(record, column)).filter(isKey))]
 		if (keys.length === 0) return records.map(() => undefined)
-		const related = this.#storage.table(resolved.model)
+		const related = this.#storage.table(resolved.table)
 		const rows = (await related.get(keys))
 			.filter((row) => row !== undefined)
 			.map((row) => readRow(related.name, row))
 		const index = indexRows(
 			rows,
 			related.primary,
-			await this.#nest(resolved.model, rows, sub, options),
+			await this.#nest(resolved.table, rows, sub, options),
 		)
 		return records.map((record) => {
 			const fk = resolveField(record, column)
@@ -371,13 +371,13 @@ export class Model<T = Row> implements ModelInterface<T> {
 		if (keys.length === 0) return records.map(() => [])
 		const rows = (
 			await this.#storage
-				.table(resolved.model)
+				.table(resolved.table)
 				.records(
 					{ conditions: [{ column: foreign, operator: 'any', values: keys, connector: 'and' }] },
 					options,
 				)
-		).map((row) => readRow(resolved.model, row))
-		const groups = groupRows(rows, foreign, await this.#nest(resolved.model, rows, sub, options))
+		).map((row) => readRow(resolved.table, row))
+		const groups = groupRows(rows, foreign, await this.#nest(resolved.table, rows, sub, options))
 		return records.map((record) => groups.get(String(resolveField(record, primary))) ?? [])
 	}
 
@@ -419,14 +419,14 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (targets.length === 0) return records.map(() => [])
 		checkAbort(options?.signal)
-		const related = this.#storage.table(resolved.model)
+		const related = this.#storage.table(resolved.table)
 		const rows = (await related.get(targets))
 			.filter((row) => row !== undefined)
 			.map((row) => readRow(related.name, row))
 		const index = indexRows(
 			rows,
 			related.primary,
-			await this.#nest(resolved.model, rows, sub, options),
+			await this.#nest(resolved.table, rows, sub, options),
 		)
 		const groups = groupRows(junctions, source)
 		return records.map((record) =>
@@ -451,7 +451,7 @@ export class Model<T = Row> implements ModelInterface<T> {
 		]
 		if (keys.length === 0) return records.map(() => [])
 		const rows = (
-			await this.#storage.table(resolved.model).records(
+			await this.#storage.table(resolved.table).records(
 				{
 					conditions: [
 						{ column: foreign, operator: 'any', values: keys, connector: 'and' },
@@ -465,20 +465,20 @@ export class Model<T = Row> implements ModelInterface<T> {
 				},
 				options,
 			)
-		).map((row) => readRow(resolved.model, row))
-		const groups = groupRows(rows, foreign, await this.#nest(resolved.model, rows, sub, options))
+		).map((row) => readRow(resolved.table, row))
+		const groups = groupRows(rows, foreign, await this.#nest(resolved.table, rows, sub, options))
 		return records.map((record) => groups.get(String(resolveField(record, primary))) ?? [])
 	}
 
 	// Recursively load a nested include onto related rows (when `sub` is an Include).
 	async #nest(
-		model: string,
+		table: string,
 		rows: readonly Row[],
 		sub: boolean | Include,
 		options?: OperationOptions,
 	): Promise<readonly Row[]> {
 		if (isBoolean(sub) || rows.length === 0) return rows
-		const context = this.#lookup(model)
+		const context = this.#lookup(table)
 		if (context === undefined) return rows
 		const props = await this.#populate(rows, sub, context.resolved, context.primary, options)
 		return rows.map((row, index) => Object.assign({}, row, props[index]))

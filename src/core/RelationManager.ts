@@ -1,6 +1,6 @@
 import type { DatabaseStorageInterface, RowOf, TableInterface, TableMap } from '@orkestrel/database'
 import type {
-	ModelInterface,
+	RepositoryInterface,
 	RelationContext,
 	RelationManagerInterface,
 	RelationManagerOptions,
@@ -9,19 +9,19 @@ import type {
 	ResolvedRelation,
 } from './types.js'
 import { resolveRelationMap, validateRelationJunction, validateRelationTable } from './helpers.js'
-import { Model } from './Model.js'
+import { Repository } from './Repository.js'
 
 /**
  * Resolves a {@link RelationSchema} once at construction and vends a typed
- * {@link ModelInterface} per declared table.
+ * {@link RepositoryInterface} per declared table.
  *
  * @remarks
- * Holds storage both at its precise type (to type each model's own table)
+ * Holds storage both at its precise type (to type each repository's own table)
  * and at the broad `DatabaseStorageInterface` (to fetch related tables by runtime name
  * while loading). Construction validates every target and junction against the
  * database's declared tables, so invalid definitions fail before an operation runs.
- * The `model` option's `on` and `error` are threaded into every model vended, and
- * each `model(name)` call constructs a handle owning its own emitter, so retain the
+ * The `repository` option's `on` and `error` are threaded into every repository vended, and
+ * each `repository(name)` call constructs a handle owning its own emitter, so retain the
  * handle a subscription is taken on.
  *
  * @example
@@ -31,9 +31,9 @@ import { Model } from './Model.js'
  * const manager = new RelationManager<typeof TABLES>({
  * 	storage: database,
  * 	relations: { users: { posts: hasMany('author') } },
- * 	model: { on: { load: (name, count) => metrics.record(`relation.${name}`, count) } },
+ * 	repository: { on: { load: (name, count) => metrics.record(`relation.${name}`, count) } },
  * })
- * const users = manager.model('users')
+ * const users = manager.repository('users')
  * const ada = await users.load('u1', { posts: true })
  * ```
  */
@@ -41,14 +41,14 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 	readonly #storage: DatabaseStorageInterface<T>
 	readonly #broad: DatabaseStorageInterface
 	readonly #relations: RelationSchema<T>
-	readonly #model: RelationManagerOptions['model']
+	readonly #repository: RelationManagerOptions['repository']
 	readonly #resolved = new Map<string, ReadonlyMap<string, ResolvedRelation>>()
 
 	/**
 	 * Constructs a registry over storage and its relation definitions.
 	 *
 	 * @param options - The `storage`, an optional `relations` map, and the optional
-	 *   `model` emitter settings threaded into every model vended
+	 *   `repository` emitter settings threaded into every repository vended
 	 * @throws An `INVALID` {@link RelationError} when a relation targets a table or a
 	 *   junction the database does not declare
 	 */
@@ -56,12 +56,12 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 		this.#storage = options.storage
 		this.#broad = options.storage
 		this.#relations = options.relations ?? {}
-		this.#model = options.model
+		this.#repository = options.repository
 		for (const [name, map] of Object.entries(this.#relations)) {
 			if (map === undefined) continue
 			const resolved = resolveRelationMap(map)
 			for (const [relation, entry] of resolved) {
-				validateRelationTable(this.#broad, name, relation, entry.model)
+				validateRelationTable(this.#broad, name, relation, entry.table)
 				if (entry.relationship === 'through') {
 					validateRelationTable(this.#broad, name, relation, entry.through, true)
 					validateRelationJunction(name, entry, this.#broad.table(entry.through).primary)
@@ -75,7 +75,7 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 		return this.#resolved.size
 	}
 
-	model<K extends keyof T & string>(name: K): ModelInterface<RowOf<T[K]>> {
+	repository<K extends keyof T & string>(name: K): RepositoryInterface<RowOf<T[K]>> {
 		const resolved = this.#resolved.get(name) ?? new Map<string, ResolvedRelation>()
 		const relations = this.#relations[name] ?? {}
 		return this.#vend(name, this.#storage.table(name), resolved, relations)
@@ -89,31 +89,31 @@ export class RelationManager<T extends TableMap = TableMap> implements RelationM
 		return this.#resolved.has(name)
 	}
 
-	// Construct a model over an opaque row type `R`, so `RowOf<T[K]>` is not
+	// Construct a repository over an opaque row type `R`, so `RowOf<T[K]>` is not
 	// expanded structurally here (the instantiation-depth guard `db.table` sidesteps).
-	// The `model` option's hooks and error handler reach each vended handle's own emitter.
+	// The `repository` option's hooks and error handler reach each vended handle's own emitter.
 	#vend<R>(
 		name: string,
 		table: TableInterface<R>,
 		resolved: ReadonlyMap<string, ResolvedRelation>,
 		relations: RelationMap,
-	): ModelInterface<R> {
-		return new Model(
+	): RepositoryInterface<R> {
+		return new Repository(
 			name,
 			table,
 			resolved,
 			relations,
-			(model) => this.#context(model),
+			(related) => this.#context(related),
 			this.#broad,
-			this.#model?.on,
-			this.#model?.error,
+			this.#repository?.on,
+			this.#repository?.error,
 		)
 	}
 
-	// Look up a related model's resolved relations + primary, for nested loading.
-	#context(model: string): RelationContext | undefined {
-		const resolved = this.#resolved.get(model)
+	// Look up a related table's resolved relations + primary, for nested loading.
+	#context(table: string): RelationContext | undefined {
+		const resolved = this.#resolved.get(table)
 		if (resolved === undefined) return undefined
-		return { resolved, primary: this.#broad.table(model).primary }
+		return { resolved, primary: this.#broad.table(table).primary }
 	}
 }

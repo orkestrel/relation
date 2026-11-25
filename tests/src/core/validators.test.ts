@@ -35,7 +35,7 @@ describe('isRelationDescriptor', () => {
 		expect(isRelationDescriptor({ target: {} })).toBe(false)
 		expect(isRelationDescriptor({ tag: true })).toBe(false)
 		expect(isRelationDescriptor({ label: 0 })).toBe(false)
-		expect(isRelationDescriptor({ model: 3 })).toBe(false)
+		expect(isRelationDescriptor({ table: 3 })).toBe(false)
 	})
 
 	it('refuses a member present with an undefined value', () => {

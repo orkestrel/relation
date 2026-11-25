@@ -8,7 +8,7 @@ import { RelationManager } from './RelationManager.js'
  * @remarks
  * `relations` maps table names (constrained to the database's tables) to their
  * relation maps; build entries with `belongsTo` / `hasMany` / `hasOne` /
- * `hasThrough` / `hasMorph`. `manager.model(name)` returns the typed model for a
+ * `hasThrough` / `hasMorph`. `manager.repository(name)` returns the typed repository for a
  * table — its own table is fully typed, related rows load at the `Row` type.
  *
  * At a typed root, pass the table map as the type argument. Transaction storage infers it.
@@ -41,7 +41,9 @@ import { RelationManager } from './RelationManager.js'
  * 	},
  * })
  *
- * const acme = await manager.model('accounts').load('acc1', { contacts: true, classification: true })
+ * const acme = await manager
+ * 	.repository('accounts')
+ * 	.load('acc1', { contacts: true, classification: true })
  * ```
  */
 export function createRelationManager<T extends TableMap>(
